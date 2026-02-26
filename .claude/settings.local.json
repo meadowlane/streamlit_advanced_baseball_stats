@@ -24,7 +24,13 @@
       "mcp__Control_Chrome__list_tabs",
       "mcp__Control_Chrome__open_url",
       "mcp__Control_Chrome__get_current_tab",
-      "mcp__Control_Chrome__execute_javascript"
+      "mcp__Control_Chrome__execute_javascript",
+      "Bash(python -m pytest tests/test_filters.py -v)",
+      "Bash(python3 -m pytest tests/test_filters.py -v)",
+      "Bash(pytest tests/test_filters.py -v)",
+      "Bash(pytest --ignore=tests/test_fetcher.py -v)",
+      "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py -v)",
+      "Bash(pytest tests/test_filters.py -v -x)"
     ]
   }
 }

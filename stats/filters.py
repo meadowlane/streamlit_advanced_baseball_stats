@@ -7,14 +7,99 @@ Optional so callers only specify what they need; None means "no restriction".
 apply_filters() is the single entry point that consumes a SplitFilters and
 returns a narrowed DataFrame.  It is intentionally orthogonal to get_splits():
 call it first, then pass the result to get_splits().
+
+FilterSpec / FILTER_REGISTRY describe the available filter types for the
+dynamic filter builder UI (Phase 2).  rows_to_split_filters() converts the
+session-state row list produced by that UI into a SplitFilters instance.
+
+Month filtering note
+--------------------
+The month filter derives the calendar month from the ``game_date`` column at
+call time via ``pd.to_datetime(df["game_date"]).dt.month``.  No pre-computed
+``_month`` column is required or created.
+
+home_away encoding note
+-----------------------
+Statcast ``inning_topbot`` is ``"Bot"`` when the home team is batting (bottom
+half) and ``"Top"`` when the visiting team is batting (top half).  The
+``home_away`` filter maps ``"home"`` → ``"Bot"`` and ``"away"`` → ``"Top"``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 
+
+# ---------------------------------------------------------------------------
+# FilterSpec registry
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FilterSpec:
+    """Metadata for a single filter type used by the dynamic filter builder.
+
+    Attributes
+    ----------
+    key : str
+        Unique identifier; used as the ``"filter_type"`` value in row dicts.
+    label : str
+        Human-readable name shown in the sidebar UI.
+    required_cols : list[str]
+        DataFrame columns that must be present for this filter to operate.
+    default_params : dict
+        Initial ``"params"`` dict used when a new row of this type is created.
+    """
+
+    key: str
+    label: str
+    required_cols: list[str]
+    default_params: dict
+
+
+FILTER_REGISTRY: dict[str, FilterSpec] = {
+    "inning": FilterSpec(
+        key="inning",
+        label="Inning range",
+        required_cols=["inning"],
+        default_params={"min": 1, "max": 9},
+    ),
+    "pitcher_hand": FilterSpec(
+        key="pitcher_hand",
+        label="Pitcher handedness",
+        required_cols=["p_throws"],
+        default_params={"hand": "R"},
+    ),
+    "home_away": FilterSpec(
+        key="home_away",
+        label="Home / Away",
+        required_cols=["inning_topbot"],
+        # "Bot" = home team bats (bottom half); "Top" = away team bats.
+        default_params={"side": "home"},
+    ),
+    "month": FilterSpec(
+        key="month",
+        label="Month",
+        required_cols=["game_date"],
+        # Month is derived from game_date via pd.to_datetime().dt.month at
+        # filter time; no pre-computed _month column is required.
+        default_params={"month": 4},
+    ),
+    "count": FilterSpec(
+        key="count",
+        label="Count",
+        required_cols=["balls", "strikes"],
+        # Either or both of balls/strikes may be None (= any value).
+        default_params={"balls": None, "strikes": None},
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# SplitFilters
+# ---------------------------------------------------------------------------
 
 @dataclass
 class SplitFilters:
@@ -28,10 +113,119 @@ class SplitFilters:
         Keep only pitches from this inning onward (inclusive).
     inning_max : int | None
         Keep only pitches up to this inning (inclusive).
+    pitcher_hand : "L" | "R" | None
+        Keep only pitches thrown by a left- or right-handed pitcher.
+        Maps to the Statcast ``p_throws`` column.
+    home_away : "home" | "away" | None
+        Keep only pitches from home plate appearances (batter's team is home)
+        or away plate appearances.  Maps to ``inning_topbot``: ``"Bot"`` = home
+        bats, ``"Top"`` = away bats.
+    month : int | None
+        Keep only pitches from games in this calendar month (1–12).
+        Derived from ``game_date`` at filter time.
+    balls : int | None
+        Keep only pitches where the ball count equals this value (0–3).
+    strikes : int | None
+        Keep only pitches where the strike count equals this value (0–2).
     """
 
-    inning_min: int | None = None
-    inning_max: int | None = None
+    inning_min:   int | None = None
+    inning_max:   int | None = None
+    pitcher_hand: Literal["L", "R"] | None = None
+    home_away:    Literal["home", "away"] | None = None
+    month:        int | None = None
+    balls:        int | None = None
+    strikes:      int | None = None
+
+
+# ---------------------------------------------------------------------------
+# rows_to_split_filters
+# ---------------------------------------------------------------------------
+
+def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
+    """Translate a session-state filter-row list into a SplitFilters instance.
+
+    Each row dict must have the shape::
+
+        {
+            "id":          str,   # unique per row; used for widget keys
+            "filter_type": str,   # key into FILTER_REGISTRY
+            "params":      dict,  # type-specific parameter values
+        }
+
+    When multiple rows set the same ``SplitFilters`` field (e.g. two ``"inning"``
+    rows), the **last row wins** — its values overwrite any earlier ones.
+    Unknown ``filter_type`` values are silently ignored.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Ordered list of filter-row dicts from ``st.session_state["filter_rows"]``.
+
+    Returns
+    -------
+    SplitFilters
+        Assembled filter configuration ready for ``apply_filters``.
+    """
+    kwargs: dict = {}
+    for row in rows:
+        ft = row.get("filter_type")
+        if ft is None:
+            continue  # skip malformed rows missing the required key
+        p  = row.get("params", {})
+
+        if ft == "inning":
+            kwargs["inning_min"] = p.get("min")
+            kwargs["inning_max"] = p.get("max")
+        elif ft == "pitcher_hand":
+            kwargs["pitcher_hand"] = p.get("hand")
+        elif ft == "home_away":
+            kwargs["home_away"] = p.get("side")
+        elif ft == "month":
+            kwargs["month"] = p.get("month")
+        elif ft == "count":
+            # Always assign both fields so a later row that resets balls or
+            # strikes to None correctly overrides an earlier row's value.
+            kwargs["balls"]   = p.get("balls")
+            kwargs["strikes"] = p.get("strikes")
+        # Unknown filter types are silently ignored.
+
+    return SplitFilters(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _col_ok(df: pd.DataFrame, col: str, filter_name: str) -> bool:
+    """Return True if *col* is present in *df*.
+
+    Missing-column policy (mirrors the existing inning-filter behaviour):
+
+    * Inside a live Streamlit session: emit ``st.warning`` and return ``False``
+      so the caller skips this individual filter without crashing the UI.
+    * Outside a Streamlit session: raise ``ValueError``.
+
+    Unlike the original single-filter implementation that returned the whole
+    DataFrame early, this helper skips only the offending filter so that
+    remaining active filters are still applied.
+    """
+    if col in df.columns:
+        return True
+
+    msg = (
+        f"apply_filters: '{filter_name}' filter is active but the DataFrame "
+        f"has no '{col}' column."
+    )
+    try:
+        import streamlit.runtime  # noqa: PLC0415
+        if streamlit.runtime.exists():
+            import streamlit as st  # noqa: PLC0415
+            st.warning(msg)
+            return False
+    except Exception:
+        pass
+    raise ValueError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -41,8 +235,13 @@ class SplitFilters:
 def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
     """Return a copy of *df* narrowed to the rows matching all active filters.
 
-    A filter field is "active" when it is not None.  If no fields are active
-    the original DataFrame is returned unchanged (no copy, no allocation).
+    A filter field is "active" when it is not None.  All active filters are
+    AND-combined.  If no fields are active the original DataFrame is returned
+    unchanged (no copy, no allocation).
+
+    Month filtering derives the calendar month from ``game_date`` at call time
+    via ``pd.to_datetime(df["game_date"]).dt.month``; no pre-computed ``_month``
+    column is required or created.
 
     Parameters
     ----------
@@ -54,32 +253,54 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
     Raises
     ------
     ValueError
-        When an inning filter is active but ``df`` has no ``"inning"`` column
-        and the call is made outside a live Streamlit session.  Inside a
-        Streamlit session a warning is shown instead so the UI stays responsive.
+        When a filter is active but its required column is absent and the call
+        is made outside a live Streamlit session.  Inside Streamlit a warning
+        is shown and that individual filter is skipped.
     """
-    inning_active = filters.inning_min is not None or filters.inning_max is not None
+    # Fast path — avoid any allocation when nothing is active.
+    if not any([
+        filters.inning_min   is not None,
+        filters.inning_max   is not None,
+        filters.pitcher_hand is not None,
+        filters.home_away    is not None,
+        filters.month        is not None,
+        filters.balls        is not None,
+        filters.strikes      is not None,
+    ]):
+        return df
 
-    if not inning_active:
-        return df  # fast path — no allocation
+    # --- inning ----------------------------------------------------------
+    if filters.inning_min is not None or filters.inning_max is not None:
+        if _col_ok(df, "inning", "inning"):
+            if filters.inning_min is not None:
+                df = df[df["inning"] >= filters.inning_min]
+            if filters.inning_max is not None:
+                df = df[df["inning"] <= filters.inning_max]
 
-    if "inning" not in df.columns:
-        msg = (
-            "apply_filters: an inning filter is set but the DataFrame has no "
-            "'inning' column.  Ensure 'inning' is present in STATCAST_KEEP_COLS."
-        )
-        try:
-            import streamlit.runtime
-            if streamlit.runtime.exists():
-                import streamlit as st
-                st.warning(msg)
-                return df
-        except Exception:
-            pass
-        raise ValueError(msg)
+    # --- pitcher handedness ----------------------------------------------
+    if filters.pitcher_hand is not None:
+        if _col_ok(df, "p_throws", "pitcher_hand"):
+            df = df[df["p_throws"] == filters.pitcher_hand]
 
-    if filters.inning_min is not None:
-        df = df[df["inning"] >= filters.inning_min]
-    if filters.inning_max is not None:
-        df = df[df["inning"] <= filters.inning_max]
+    # --- home / away -----------------------------------------------------
+    if filters.home_away is not None:
+        if _col_ok(df, "inning_topbot", "home_away"):
+            topbot = "Bot" if filters.home_away == "home" else "Top"
+            df = df[df["inning_topbot"] == topbot]
+
+    # --- month (derived from game_date) ----------------------------------
+    if filters.month is not None:
+        if _col_ok(df, "game_date", "month"):
+            df = df[pd.to_datetime(df["game_date"]).dt.month == filters.month]
+
+    # --- count: balls ----------------------------------------------------
+    if filters.balls is not None:
+        if _col_ok(df, "balls", "balls"):
+            df = df[df["balls"] == filters.balls]
+
+    # --- count: strikes --------------------------------------------------
+    if filters.strikes is not None:
+        if _col_ok(df, "strikes", "strikes"):
+            df = df[df["strikes"] == filters.strikes]
+
     return df

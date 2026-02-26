@@ -29,6 +29,8 @@ STATCAST_KEEP_COLS = [
     "events",            # plate appearance result
     "description",
     "stand",             # batter handedness
+    "balls",             # ball count at time of pitch (0–3)
+    "strikes",           # strike count at time of pitch (0–2)
 ]
 
 
