@@ -30,7 +30,8 @@
       "Bash(pytest tests/test_filters.py -v)",
       "Bash(pytest --ignore=tests/test_fetcher.py -v)",
       "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py -v)",
-      "Bash(pytest tests/test_filters.py -v -x)"
+      "Bash(pytest tests/test_filters.py -v -x)",
+      "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py -q)"
     ]
   }
 }
