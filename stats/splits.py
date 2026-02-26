@@ -187,7 +187,7 @@ def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:
     n_pitches = len(df)
 
     if "events" not in df.columns:
-        return {"Pitches Seen": n_pitches, "BIP": None, "PA": None}
+        return {"N_pitches": n_pitches, "N_BIP": None, "approx_PA": None}
 
     pa = _pa_events(df)
     approx_pa = len(pa)

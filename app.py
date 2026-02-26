@@ -14,6 +14,7 @@ from stats.percentiles import (
 from stats.filters import (
     FILTER_REGISTRY,
     apply_filters,
+    get_prepared_df_cached,
     rows_to_split_filters,
     summarize_filter_rows,
 )
@@ -45,6 +46,7 @@ SPLIT_TYPE_MAP = {
 }
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+_PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +298,16 @@ if mlbam_id is None:
 # ---------------------------------------------------------------------------
 
 with st.spinner(f"Loading {season} Statcast data for {selected_name}…"):
-    statcast_df = get_statcast_batter(mlbam_id, season)
+    raw_statcast_df = get_statcast_batter(mlbam_id, season)
+
+prepared_cache = st.session_state.setdefault(_PREPARED_DF_CACHE_KEY, {})
+prepare_cache_key = (int(mlbam_id), int(season), str(player_type))
+statcast_df = get_prepared_df_cached(
+    raw_statcast_df,
+    prepared_cache,
+    prepare_cache_key,
+    log_fn=print,
+)
 
 filtered_df = apply_filters(statcast_df, filters)
 sample_sizes = get_sample_sizes(filtered_df)

@@ -8,6 +8,8 @@ from stats.filters import (
     FilterSpec,
     SplitFilters,
     apply_filters,
+    get_prepared_df_cached,
+    prepare_df,
     rows_to_split_filters,
     summarize_filter_rows,
 )
@@ -307,6 +309,54 @@ class TestRowsToSplitFilters:
 
 
 # ===========================================================================
+# TestPrepareDf
+# ===========================================================================
+
+class TestPrepareDf:
+    def test_derives_month_and_coerces_game_date_and_inning(self):
+        df = pd.DataFrame(
+            {
+                "game_date": ["2024-04-10", "not-a-date", None],
+                "inning": ["1", "2", "x"],
+            }
+        )
+        prepared = prepare_df(df)
+
+        assert "_month" in prepared.columns
+        assert prepared["_month"].iloc[0] == 4
+        assert pd.isna(prepared["_month"].iloc[1])
+        assert pd.isna(prepared["_month"].iloc[2])
+
+        assert pd.api.types.is_datetime64_any_dtype(prepared["game_date"])
+        assert prepared["inning"].iloc[0] == 1
+        assert prepared["inning"].iloc[1] == 2
+        assert pd.isna(prepared["inning"].iloc[2])
+
+    def test_get_prepared_df_cached_hit_and_miss(self):
+        df = pd.DataFrame({"game_date": ["2024-04-10"], "inning": ["1"]})
+        cache: dict[tuple[int, int, str], pd.DataFrame] = {}
+        logs: list[str] = []
+        key = (123, 2025, "Batter")
+
+        first = get_prepared_df_cached(df, cache, key, log_fn=logs.append)
+        second = get_prepared_df_cached(df, cache, key, log_fn=logs.append)
+
+        assert first is second
+        assert logs[0].startswith("[prepare_df] cache miss")
+        assert logs[1].startswith("[prepare_df] cache hit")
+
+    def test_get_prepared_df_cached_new_key_misses(self):
+        df = pd.DataFrame({"game_date": ["2024-04-10"], "inning": ["1"]})
+        cache: dict[tuple[int, int, str], pd.DataFrame] = {}
+        logs: list[str] = []
+
+        get_prepared_df_cached(df, cache, (123, 2025, "Batter"), log_fn=logs.append)
+        get_prepared_df_cached(df, cache, (123, 2024, "Batter"), log_fn=logs.append)
+
+        assert sum("cache miss" in msg for msg in logs) == 2
+
+
+# ===========================================================================
 # TestSummarizeFilterRows
 # ===========================================================================
 
@@ -434,6 +484,12 @@ class TestApplyFiltersMonth:
         df = pd.DataFrame({"inning": [1, 2]})
         with pytest.raises(ValueError, match="game_date"):
             apply_filters(df, SplitFilters(month=4))
+
+    def test_month_filter_works_with_prepared_month_column(self):
+        df = _make_full_df().drop(columns=["game_date"])
+        df["_month"] = [4, 4, 5, 5, 6, 7]
+        result = apply_filters(df, SplitFilters(month=4))
+        assert result["inning"].tolist() == [1, 2]
 
 
 # ===========================================================================

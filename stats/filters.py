@@ -14,9 +14,10 @@ session-state row list produced by that UI into a SplitFilters instance.
 
 Month filtering note
 --------------------
-The month filter derives the calendar month from the ``game_date`` column at
-call time via ``pd.to_datetime(df["game_date"]).dt.month``.  No pre-computed
-``_month`` column is required or created.
+``prepare_df()`` derives ``_month`` from ``game_date`` once after fetch/cache.
+The month filter uses that derived column.  For backward compatibility,
+``apply_filters()`` can still fall back to deriving month from ``game_date``
+when ``_month`` is absent.
 
 home_away encoding note
 -----------------------
@@ -28,7 +29,7 @@ half) and ``"Top"`` when the visiting team is batting (top half).  The
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Callable, Literal
 
 import pandas as pd
 
@@ -83,8 +84,7 @@ FILTER_REGISTRY: dict[str, FilterSpec] = {
         key="month",
         label="Month",
         required_cols=["game_date"],
-        # Month is derived from game_date via pd.to_datetime().dt.month at
-        # filter time; no pre-computed _month column is required.
+        # Month is derived in prepare_df via game_date -> _month.
         default_params={"month": 4},
     ),
     "count": FilterSpec(
@@ -97,6 +97,7 @@ FILTER_REGISTRY: dict[str, FilterSpec] = {
 }
 
 _MONTH_TO_LABEL = {4: "Apr", 5: "May", 6: "Jun", 7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct"}
+_MONTH_COL = "_month"
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ class SplitFilters:
         bats, ``"Top"`` = away bats.
     month : int | None
         Keep only pitches from games in this calendar month (1–12).
-        Derived from ``game_date`` at filter time.
+        Uses the derived ``_month`` column (created by ``prepare_df``).
     balls : int | None
         Keep only pitches where the ball count equals this value (0–3).
     strikes : int | None
@@ -193,6 +194,45 @@ def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
         # Unknown filter types are silently ignored.
 
     return SplitFilters(**kwargs)
+
+
+def prepare_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a prepared copy of *df* with normalized dtypes/derived columns.
+
+    - ``game_date`` coerced to datetime (invalid values become NaT)
+    - derived ``_month`` column added once from ``game_date``
+    - ``inning`` coerced to numeric if present (invalid values become NaN)
+    """
+    out = df.copy()
+
+    if "game_date" in out.columns:
+        out["game_date"] = pd.to_datetime(out["game_date"], errors="coerce")
+        out[_MONTH_COL] = out["game_date"].dt.month
+
+    if "inning" in out.columns:
+        out["inning"] = pd.to_numeric(out["inning"], errors="coerce")
+
+    return out
+
+
+def get_prepared_df_cached(
+    df: pd.DataFrame,
+    cache: dict[tuple[int, int, str], pd.DataFrame],
+    cache_key: tuple[int, int, str],
+    log_fn: Callable[[str], None] | None = None,
+) -> pd.DataFrame:
+    """Return a memoized prepared DataFrame keyed by (player_id, season, type)."""
+    if cache_key in cache:
+        if log_fn is not None:
+            log_fn(f"[prepare_df] cache hit: {cache_key}")
+        return cache[cache_key]
+
+    if log_fn is not None:
+        log_fn(f"[prepare_df] cache miss: {cache_key}")
+
+    prepared = prepare_df(df)
+    cache[cache_key] = prepared
+    return prepared
 
 
 def summarize_filter_rows(rows: list[dict]) -> str:
@@ -286,9 +326,9 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
     AND-combined.  If no fields are active the original DataFrame is returned
     unchanged (no copy, no allocation).
 
-    Month filtering derives the calendar month from ``game_date`` at call time
-    via ``pd.to_datetime(df["game_date"]).dt.month``; no pre-computed ``_month``
-    column is required or created.
+    Month filtering uses the derived ``_month`` column created by
+    ``prepare_df``.  For backward compatibility, if ``_month`` is absent but
+    ``game_date`` is present, month is derived on the fly.
 
     Parameters
     ----------
@@ -335,10 +375,12 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
             topbot = "Bot" if filters.home_away == "home" else "Top"
             df = df[df["inning_topbot"] == topbot]
 
-    # --- month (derived from game_date) ----------------------------------
+    # --- month (prefer precomputed _month; fallback to game_date) --------
     if filters.month is not None:
-        if _col_ok(df, "game_date", "month"):
-            df = df[pd.to_datetime(df["game_date"]).dt.month == filters.month]
+        if _MONTH_COL in df.columns:
+            df = df[df[_MONTH_COL] == filters.month]
+        elif _col_ok(df, "game_date", "month"):
+            df = df[pd.to_datetime(df["game_date"], errors="coerce").dt.month == filters.month]
 
     # --- count: balls ----------------------------------------------------
     if filters.balls is not None:
