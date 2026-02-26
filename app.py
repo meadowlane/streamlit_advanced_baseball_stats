@@ -66,12 +66,36 @@ with st.sidebar:
 
     player_names = sorted(season_df["Name"].dropna().unique().tolist())
 
+    # Preserve the selected player across season changes.
+    # If they didn't qualify this season (< 50 PA), inject their name so the
+    # widget keeps showing it; a warning is surfaced below and in the main area.
+    #
+    # Clear logic: the button sets a pending flag; we honour it here, *before*
+    # the widget is instantiated, which is the only point Streamlit allows
+    # writing to a widget's own session-state key.
+    if st.session_state.pop("_clear_player_pending", False):
+        st.session_state["player_selectbox"] = None
+
+    _prev_player = st.session_state.get("player_selectbox")
+    _player_not_in_season = _prev_player is not None and _prev_player not in player_names
+    if _player_not_in_season:
+        player_names = [_prev_player] + player_names
+
     selected_name = st.selectbox(
         "Player",
         options=player_names,
         index=None,
         placeholder="Type to search…",
+        key="player_selectbox",
     )
+
+    if _player_not_in_season and selected_name == _prev_player:
+        st.warning(f"No qualifying data for {selected_name} in {season}.")
+
+    if selected_name is not None:
+        if st.button("Clear player", use_container_width=True):
+            st.session_state["_clear_player_pending"] = True
+            st.rerun()
 
     st.divider()
     st.caption("Data via pybaseball / Baseball Savant")
@@ -97,7 +121,11 @@ if selected_name is None:
 
 player_row = get_player_row(season_df, selected_name)
 if player_row is None:
-    st.error(f"Could not find {selected_name} in the {season} season data.")
+    st.warning(
+        f"{selected_name} has no qualifying data in the {season} season "
+        "(fewer than 50 plate appearances or season not yet available). "
+        "Select a different season or use **Clear player** in the sidebar."
+    )
     st.stop()
 
 fg_id = int(player_row["IDfg"])

@@ -216,18 +216,18 @@ def percentile_bar_chart(
             title="Percentile rank",
             tickvals=[0, 25, 50, 75, 100],
             showgrid=True,
-            gridcolor="#eeeeee",
+            gridcolor="rgba(128,128,128,0.2)",
         ),
         yaxis=dict(autorange="reversed", tickfont=dict(size=13, family="monospace")),
         height=280,
         margin=dict(l=20, r=10, t=10, b=40),
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#ffffff",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         bargap=0.35,
     )
 
     # League-average reference line at 50th
-    fig.add_vline(x=50, line_dash="dot", line_color="#bbbbbb", line_width=1)
+    fig.add_vline(x=50, line_dash="dot", line_color="rgba(128,128,128,0.5)", line_width=1)
 
     st.plotly_chart(fig, use_container_width=True)
 
