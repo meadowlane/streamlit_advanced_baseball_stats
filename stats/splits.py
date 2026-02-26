@@ -176,6 +176,31 @@ def _compute_woba(pa: pd.DataFrame) -> float | None:
     return numerator / denominator
 
 
+def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:
+    """Return display-ready sample sizes for a (possibly filtered) Statcast subset.
+
+    Notes
+    -----
+    ``approx_PA`` is an approximation for pitch-level Statcast data: it counts
+    rows where ``events`` is a recognized PA-ending outcome.
+    """
+    n_pitches = len(df)
+
+    if "events" not in df.columns:
+        return {"Pitches Seen": n_pitches, "BIP": None, "PA": None}
+
+    pa = _pa_events(df)
+    approx_pa = len(pa)
+
+    if "launch_speed" not in pa.columns:
+        return {"N_pitches": n_pitches, "N_BIP": None, "approx_PA": approx_pa}
+
+    bip_mask = pa["events"].isin(BATTED_BALL_EVENTS) & pa["launch_speed"].notna()
+    n_bip = int(bip_mask.sum())
+
+    return {"N_pitches": n_pitches, "N_BIP": n_bip, "approx_PA": approx_pa}
+
+
 # ---------------------------------------------------------------------------
 # Public split functions
 # ---------------------------------------------------------------------------

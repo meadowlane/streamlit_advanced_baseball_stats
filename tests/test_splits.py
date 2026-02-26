@@ -8,6 +8,7 @@ from stats.splits import (
     _pa_events,
     _compute_stats,
     _compute_woba,
+    get_sample_sizes,
     split_by_hand,
     split_home_away,
     split_by_month,
@@ -202,6 +203,39 @@ class TestComputeWoba:
     def test_only_sac_bunts_returns_none(self):
         df = pd.DataFrame({"events": ["sac_bunt", "sac_bunt"]})
         assert _compute_woba(df) is None
+
+
+# ---------------------------------------------------------------------------
+# get_sample_sizes
+# ---------------------------------------------------------------------------
+
+class TestGetSampleSizes:
+    def test_returns_pitch_pa_and_bip_counts(self):
+        counts = get_sample_sizes(_make_df(30))
+        assert counts["N_pitches"] == 30
+        assert counts["approx_PA"] == 30
+        assert counts["N_BIP"] is not None
+        assert counts["N_BIP"] > 0
+
+    def test_empty_df_safe(self):
+        counts = get_sample_sizes(_empty_df())
+        assert counts["N_pitches"] == 0
+        assert counts["approx_PA"] == 0
+        assert counts["N_BIP"] == 0
+
+    def test_missing_events_column(self):
+        df = pd.DataFrame({"launch_speed": [95.0, 100.0]})
+        counts = get_sample_sizes(df)
+        assert counts["N_pitches"] == 2
+        assert counts["approx_PA"] is None
+        assert counts["N_BIP"] is None
+
+    def test_missing_launch_speed_column(self):
+        df = pd.DataFrame({"events": ["single", "walk", None]})
+        counts = get_sample_sizes(df)
+        assert counts["N_pitches"] == 3
+        assert counts["approx_PA"] == 2
+        assert counts["N_BIP"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from stats.filters import (
     rows_to_split_filters,
     summarize_filter_rows,
 )
-from stats.splits import _compute_stats, get_splits
+from stats.splits import _compute_stats, get_sample_sizes, get_splits
 from ui.components import (
     percentile_bar_chart,
     player_header,
@@ -299,6 +299,7 @@ with st.spinner(f"Loading {season} Statcast data for {selected_name}…"):
     statcast_df = get_statcast_batter(mlbam_id, season)
 
 filtered_df = apply_filters(statcast_df, filters)
+sample_sizes = get_sample_sizes(filtered_df)
 
 # ---------------------------------------------------------------------------
 # Build player stats from filtered Statcast data.
@@ -334,6 +335,13 @@ if active_filter_summary == "No filters (full season data)":
     st.caption(active_filter_summary)
 else:
     st.caption(f"Active filters: {active_filter_summary}")
+
+sample_parts = [f"N_pitches: {sample_sizes['N_pitches']:,}"]
+if sample_sizes["N_BIP"] is not None:
+    sample_parts.append(f"N_BIP: {sample_sizes['N_BIP']:,}")
+if sample_sizes["approx_PA"] is not None:
+    sample_parts.append(f"Approx PA: {sample_sizes['approx_PA']:,}")
+st.caption(f"Sample size: {' | '.join(sample_parts)}")
 
 st.subheader("Season Stats")
 stat_cards_row(player_stats, percentiles, color_tiers)
