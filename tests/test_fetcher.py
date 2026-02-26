@@ -51,6 +51,7 @@ def _make_statcast_df(n=100) -> pd.DataFrame:
         "p_throws": ["R"] * (n // 2) + ["L"] * (n - n // 2),
         "home_team": ["LAD"] * n,
         "away_team": ["NYY"] * n,
+        "inning": [(i % 9) + 1 for i in range(n)],
         "inning_topbot": ["Bot"] * n,
         "launch_speed": [98.0 if i % 3 == 0 else 88.0 for i in range(n)],
         "launch_angle": [15.0] * n,
@@ -125,6 +126,14 @@ class TestFetchStatcastBatter:
         mock_statcast.return_value = full_df
         df = _fetch_statcast_batter(660271, 2024)
         assert "irrelevant_col" not in df.columns
+
+    @patch("data.fetcher.pb.statcast_batter")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_inning_col_retained(self, mock_cache, mock_statcast):
+        """'inning' must survive the STATCAST_KEEP_COLS column filter."""
+        mock_statcast.return_value = _make_statcast_df()
+        df = _fetch_statcast_batter(660271, 2024)
+        assert "inning" in df.columns
 
     @patch("data.fetcher.pb.statcast_batter")
     @patch("data.fetcher.pb.cache.enable")

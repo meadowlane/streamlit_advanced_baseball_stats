@@ -15,7 +15,10 @@
       "Bash(.venv/bin/pytest tests/ -v)",
       "mcp__Claude_Preview__preview_start",
       "Bash(\"/Users/nate/Claude Baseball/.venv/bin/streamlit\" --version)",
-      "Bash(lsof -i :8501)"
+      "Bash(lsof -i :8501)",
+      "Bash(.venv/bin/python -m pytest tests/test_fetcher.py -v)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(.venv/bin/python -c \"import streamlit.runtime; print\\(dir\\(streamlit.runtime\\)\\); print\\(streamlit.runtime.exists\\(\\)\\)\")"
     ]
   }
 }

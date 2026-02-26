@@ -20,6 +20,7 @@ STATCAST_KEEP_COLS = [
     "p_throws",          # pitcher handedness: L or R
     "home_team",
     "away_team",
+    "inning",            # inning number (1–9+)
     "inning_topbot",     # Top = visiting batter, Bot = home batter
     "launch_speed",      # exit velocity
     "launch_angle",
