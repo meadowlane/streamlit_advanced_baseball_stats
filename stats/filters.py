@@ -96,6 +96,8 @@ FILTER_REGISTRY: dict[str, FilterSpec] = {
     ),
 }
 
+_MONTH_TO_LABEL = {4: "Apr", 5: "May", 6: "Jun", 7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct"}
+
 
 # ---------------------------------------------------------------------------
 # SplitFilters
@@ -191,6 +193,51 @@ def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
         # Unknown filter types are silently ignored.
 
     return SplitFilters(**kwargs)
+
+
+def summarize_filter_rows(rows: list[dict]) -> str:
+    """Return a compact human-readable summary for dynamic filter rows."""
+    if not rows:
+        return "No filters (full season data)"
+
+    parts: list[str] = []
+    for row in rows:
+        ft = row.get("filter_type")
+        spec = FILTER_REGISTRY.get(ft)
+        if spec is None:
+            continue
+
+        p = row.get("params", {})
+        label = spec.label
+
+        if ft == "inning":
+            inning_min = p.get("min", spec.default_params.get("min", 1))
+            inning_max = p.get("max", spec.default_params.get("max", 9))
+            parts.append(f"{label}: {inning_min}-{inning_max}")
+        elif ft == "pitcher_hand":
+            hand = p.get("hand", spec.default_params.get("hand", "R"))
+            parts.append(f"{label}: {hand}")
+        elif ft == "home_away":
+            side = str(p.get("side", spec.default_params.get("side", "home"))).capitalize()
+            parts.append(f"{label}: {side}")
+        elif ft == "month":
+            month_int = p.get("month", spec.default_params.get("month", 4))
+            month_label = _MONTH_TO_LABEL.get(month_int, str(month_int))
+            parts.append(f"{label}: {month_label}")
+        elif ft == "count":
+            balls = p.get("balls")
+            strikes = p.get("strikes")
+            if balls is None and strikes is None:
+                value = "Any"
+            elif balls is None:
+                value = f"strikes {strikes}"
+            elif strikes is None:
+                value = f"balls {balls}"
+            else:
+                value = f"{balls}-{strikes}"
+            parts.append(f"{label}: {value}")
+
+    return ", ".join(parts) if parts else "No filters (full season data)"
 
 
 # ---------------------------------------------------------------------------

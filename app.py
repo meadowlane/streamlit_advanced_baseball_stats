@@ -11,7 +11,12 @@ from stats.percentiles import (
     get_all_color_tiers,
     get_all_percentiles,
 )
-from stats.filters import FILTER_REGISTRY, apply_filters, rows_to_split_filters
+from stats.filters import (
+    FILTER_REGISTRY,
+    apply_filters,
+    rows_to_split_filters,
+    summarize_filter_rows,
+)
 from stats.splits import _compute_stats, get_splits
 from ui.components import (
     percentile_bar_chart,
@@ -71,31 +76,6 @@ def _make_type_change_cb(row_id: str):
                     r["params"]      = FILTER_REGISTRY[new_key].default_params.copy()
                 break
     return _cb
-
-
-def _filter_summary(rows: list[dict]) -> str | None:
-    """Return a compact comma-joined summary of active filter rows, or None."""
-    parts = []
-    for row in rows:
-        ft = row["filter_type"]
-        p  = row["params"]
-        if ft == "inning":
-            parts.append(f"Inning {p.get('min', 1)}–{p.get('max', 9)}")
-        elif ft == "pitcher_hand":
-            parts.append("vs LHP" if p.get("hand") == "L" else "vs RHP")
-        elif ft == "home_away":
-            parts.append(p.get("side", "home").capitalize())
-        elif ft == "month":
-            parts.append(_INT_TO_MONTH.get(p.get("month", 4), "?"))
-        elif ft == "count":
-            b, s = p.get("balls"), p.get("strikes")
-            if b is not None and s is not None:
-                parts.append(f"{b}–{s} count")
-            elif b is not None:
-                parts.append(f"{b}-ball count")
-            elif s is not None:
-                parts.append(f"{s}-strike count")
-    return ", ".join(parts) if parts else None
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +243,8 @@ with st.sidebar:
             if i < len(rows) - 1:
                 st.divider()
 
-    _summary = _filter_summary(st.session_state["filter_rows"])
-    if _summary:
-        st.caption(f"Active: {_summary}")
+    active_filter_summary = summarize_filter_rows(st.session_state["filter_rows"])
+    st.caption(f"Active: {active_filter_summary}")
 
     filters = rows_to_split_filters(st.session_state["filter_rows"])
 
@@ -350,6 +329,11 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Season stat cards
 # ---------------------------------------------------------------------------
+
+if active_filter_summary == "No filters (full season data)":
+    st.caption(active_filter_summary)
+else:
+    st.caption(f"Active filters: {active_filter_summary}")
 
 st.subheader("Season Stats")
 stat_cards_row(player_stats, percentiles, color_tiers)
