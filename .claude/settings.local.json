@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install -r requirements.txt -q)",
+      "Bash(.venv/bin/python -:*)",
+      "Bash(.venv/bin/pytest tests/test_fetcher.py -v)",
+      "Bash(.venv/bin/pytest tests/test_splits.py -v)",
+      "Bash(.venv/bin/pytest tests/ -v --tb=short)",
+      "Bash(.venv/bin/pytest tests/test_percentiles.py -v)",
+      "Bash(.venv/bin/pytest tests/ --tb=short -q)",
+      "Bash(.venv/bin/python -c \"from ui.components import format_stat_value, format_percentile, build_chart_df; print\\(''Import OK''\\)\")",
+      "Bash(.venv/bin/pytest tests/test_components.py -v)",
+      "Bash(.venv/bin/pytest tests/ -q)",
+      "Bash(.venv/bin/python -c \":*)",
+      "Bash(.venv/bin/pytest tests/ -v)"
+    ]
+  }
+}
