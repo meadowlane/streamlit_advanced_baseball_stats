@@ -8,6 +8,9 @@ from stats.splits import (
     _pa_events,
     _compute_stats,
     _compute_woba,
+    BATTED_BALL_EVENTS,
+    STAT_REGISTRY,
+    StatSpec,
     get_sample_sizes,
     split_by_hand,
     split_home_away,
@@ -203,6 +206,36 @@ class TestComputeWoba:
     def test_only_sac_bunts_returns_none(self):
         df = pd.DataFrame({"events": ["sac_bunt", "sac_bunt"]})
         assert _compute_woba(df) is None
+
+
+# ---------------------------------------------------------------------------
+# StatSpec / registry
+# ---------------------------------------------------------------------------
+
+class TestStatRegistry:
+    def test_registry_has_current_six_stats(self):
+        assert set(STAT_REGISTRY.keys()) == {
+            "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"
+        }
+        assert all(isinstance(spec, StatSpec) for spec in STAT_REGISTRY.values())
+
+    def test_k_percent_compute_fn_on_synthetic_pa(self):
+        pa = pd.DataFrame(
+            {
+                "events": ["strikeout", "walk", "single", "field_out"],
+                "launch_speed": [np.nan, np.nan, 100.0, 90.0],
+                "launch_speed_angle": [np.nan, np.nan, 6.0, 4.0],
+                "estimated_woba_using_speedangle": [np.nan, np.nan, 0.5, 0.05],
+            }
+        )
+        bb_df = pa[pa["events"].isin(BATTED_BALL_EVENTS) & pa["launch_speed"].notna()]
+        raw_k = STAT_REGISTRY["K%"].compute_fn(pa, bb_df, len(pa))
+        assert raw_k == pytest.approx(0.25, abs=0.001)
+
+    def test_woba_compute_fn_on_synthetic_pa(self):
+        pa = pd.DataFrame({"events": ["single", "walk", "strikeout"]})
+        raw_woba = STAT_REGISTRY["wOBA"].compute_fn(pa, pd.DataFrame(), len(pa))
+        assert raw_woba == pytest.approx((0.888 + 0.690) / 3, abs=0.001)
 
 
 # ---------------------------------------------------------------------------

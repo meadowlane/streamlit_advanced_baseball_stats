@@ -16,6 +16,9 @@ Stat computation notes
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Callable, Literal
+
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -66,6 +69,9 @@ BARREL_CODE = 6
 # Hard-hit exit-velocity threshold (mph)
 HARD_HIT_MPH = 95
 
+# K events used for K% computation
+K_EVENTS = frozenset(["strikeout", "strikeout_double_play"])
+
 # Ordered output columns
 SPLIT_COLS = ["Split", "PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 
@@ -85,78 +91,30 @@ MONTH_NAMES = {
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
+StatComputeFn = Callable[[pd.DataFrame, pd.DataFrame, int], float | None]
+
+
+@dataclass(frozen=True)
+class StatSpec:
+    """Metadata + compute hook for a single displayed stat."""
+
+    key: str
+    label: str
+    required_cols: list[str]
+    formatter: Literal["pct_1", "decimal_3"]
+    compute_fn: StatComputeFn
+    glossary_key: str | None = None
+
 def _pa_events(df: pd.DataFrame) -> pd.DataFrame:
     """Return only the rows that represent plate-appearance outcomes."""
     return df[df["events"].notna() & df["events"].isin(PA_EVENTS)].copy()
 
 
-def _compute_stats(df: pd.DataFrame) -> dict:
-    """Compute all 6 core stats from a raw Statcast subset.
-
-    Accepts all pitches for the subset; filters internally to PA events.
-    Returns a dict keyed by stat name (None when not computable).
-    """
-    pa = _pa_events(df)
-    n_pa = len(pa)
-
-    if n_pa == 0:
-        return {
-            "PA": 0,
-            "K%": None, "BB%": None,
-            "HardHit%": None, "Barrel%": None,
-            "xwOBA": None, "wOBA": None,
-        }
-
-    # --- K% and BB% ---
-    k_events = {"strikeout", "strikeout_double_play"}
-    n_k = pa["events"].isin(k_events).sum()
-    n_bb = (pa["events"] == "walk").sum()
-    k_pct = n_k / n_pa
-    bb_pct = n_bb / n_pa
-
-    # --- Batted balls (launch_speed present) ---
+def _batted_ball_events(pa: pd.DataFrame) -> pd.DataFrame:
+    """Return PA-ending batted-ball events with non-null launch speed."""
     bb_mask = pa["events"].isin(BATTED_BALL_EVENTS) & pa["launch_speed"].notna()
-    bb_df = pa[bb_mask]
-    n_bb_events = len(bb_df)
-
-    # --- HardHit% ---
-    if n_bb_events > 0:
-        hard_hit_pct = (bb_df["launch_speed"] >= HARD_HIT_MPH).sum() / n_bb_events
-    else:
-        hard_hit_pct = None
-
-    # --- Barrel% (launch_speed_angle == 6) ---
-    if n_bb_events > 0 and "launch_speed_angle" in bb_df.columns:
-        barrel_pct = (bb_df["launch_speed_angle"] == BARREL_CODE).sum() / n_bb_events
-    else:
-        barrel_pct = None
-
-    # --- xwOBA (mean over batted-ball events with estimated value) ---
-    xwoba_col = "estimated_woba_using_speedangle"
-    if xwoba_col in pa.columns:
-        xwoba_vals = pa[xwoba_col].dropna()
-        xwoba = float(xwoba_vals.mean()) if len(xwoba_vals) > 0 else None
-    else:
-        xwoba = None
-
-    # --- wOBA from linear weights ---
-    woba = _compute_woba(pa)
-
-    def _pct(val: float | None, decimals: int = 1) -> float | None:
-        return round(val * 100, decimals) if val is not None else None
-
-    def _round(val: float | None, decimals: int = 3) -> float | None:
-        return round(val, decimals) if val is not None else None
-
-    return {
-        "PA": n_pa,
-        "K%": _pct(k_pct),
-        "BB%": _pct(bb_pct),
-        "HardHit%": _pct(hard_hit_pct),
-        "Barrel%": _pct(barrel_pct),
-        "xwOBA": _round(xwoba),
-        "wOBA": _round(woba),
-    }
+    return pa[bb_mask]
 
 
 def _compute_woba(pa: pd.DataFrame) -> float | None:
@@ -174,6 +132,126 @@ def _compute_woba(pa: pd.DataFrame) -> float | None:
         for event, weight in WOBA_WEIGHTS.items()
     )
     return numerator / denominator
+
+
+def _compute_k_rate(pa: pd.DataFrame, _bb_df: pd.DataFrame, n_pa: int) -> float | None:
+    if n_pa == 0:
+        return None
+    return pa["events"].isin(K_EVENTS).sum() / n_pa
+
+
+def _compute_bb_rate(pa: pd.DataFrame, _bb_df: pd.DataFrame, n_pa: int) -> float | None:
+    if n_pa == 0:
+        return None
+    return (pa["events"] == "walk").sum() / n_pa
+
+
+def _compute_hard_hit_rate(_pa: pd.DataFrame, bb_df: pd.DataFrame, _n_pa: int) -> float | None:
+    n_bb_events = len(bb_df)
+    if n_bb_events == 0:
+        return None
+    return (bb_df["launch_speed"] >= HARD_HIT_MPH).sum() / n_bb_events
+
+
+def _compute_barrel_rate(_pa: pd.DataFrame, bb_df: pd.DataFrame, _n_pa: int) -> float | None:
+    n_bb_events = len(bb_df)
+    if n_bb_events == 0 or "launch_speed_angle" not in bb_df.columns:
+        return None
+    return (bb_df["launch_speed_angle"] == BARREL_CODE).sum() / n_bb_events
+
+
+def _compute_xwoba_value(pa: pd.DataFrame, _bb_df: pd.DataFrame, _n_pa: int) -> float | None:
+    xwoba_col = "estimated_woba_using_speedangle"
+    if xwoba_col not in pa.columns:
+        return None
+    xwoba_vals = pa[xwoba_col].dropna()
+    return float(xwoba_vals.mean()) if len(xwoba_vals) > 0 else None
+
+
+def _compute_woba_value(pa: pd.DataFrame, _bb_df: pd.DataFrame, _n_pa: int) -> float | None:
+    return _compute_woba(pa)
+
+
+STAT_REGISTRY: dict[str, StatSpec] = {
+    "wOBA": StatSpec(
+        key="wOBA",
+        label="wOBA",
+        required_cols=["events"],
+        formatter="decimal_3",
+        compute_fn=_compute_woba_value,
+        glossary_key="wOBA",
+    ),
+    "xwOBA": StatSpec(
+        key="xwOBA",
+        label="xwOBA",
+        required_cols=["estimated_woba_using_speedangle"],
+        formatter="decimal_3",
+        compute_fn=_compute_xwoba_value,
+        glossary_key="xwOBA",
+    ),
+    "K%": StatSpec(
+        key="K%",
+        label="K%",
+        required_cols=["events"],
+        formatter="pct_1",
+        compute_fn=_compute_k_rate,
+        glossary_key="K%",
+    ),
+    "BB%": StatSpec(
+        key="BB%",
+        label="BB%",
+        required_cols=["events"],
+        formatter="pct_1",
+        compute_fn=_compute_bb_rate,
+        glossary_key="BB%",
+    ),
+    "HardHit%": StatSpec(
+        key="HardHit%",
+        label="HardHit%",
+        required_cols=["events", "launch_speed"],
+        formatter="pct_1",
+        compute_fn=_compute_hard_hit_rate,
+        glossary_key="HardHit%",
+    ),
+    "Barrel%": StatSpec(
+        key="Barrel%",
+        label="Barrel%",
+        required_cols=["events", "launch_speed", "launch_speed_angle"],
+        formatter="pct_1",
+        compute_fn=_compute_barrel_rate,
+        glossary_key="Barrel%",
+    ),
+}
+
+
+def _format_stat_value(value: float | None, formatter: Literal["pct_1", "decimal_3"]) -> float | None:
+    if value is None:
+        return None
+    if formatter == "pct_1":
+        return round(value * 100, 1)
+    return round(value, 3)
+
+
+def _compute_stats(df: pd.DataFrame) -> dict:
+    """Compute all 6 core stats from a raw Statcast subset.
+
+    Accepts all pitches for the subset; filters internally to PA events.
+    Returns a dict keyed by stat name (None when not computable).
+    """
+    pa = _pa_events(df)
+    n_pa = len(pa)
+
+    if n_pa == 0:
+        return {"PA": 0, **{key: None for key in STAT_REGISTRY}}
+
+    bb_df = _batted_ball_events(pa)
+    stats: dict[str, float | int | None] = {"PA": n_pa}
+
+    for key, spec in STAT_REGISTRY.items():
+        raw_value = spec.compute_fn(pa, bb_df, n_pa)
+        stats[key] = _format_stat_value(raw_value, spec.formatter)
+
+    return stats
 
 
 def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:
