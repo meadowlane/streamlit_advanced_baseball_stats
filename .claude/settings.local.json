@@ -18,7 +18,13 @@
       "Bash(lsof -i :8501)",
       "Bash(.venv/bin/python -m pytest tests/test_fetcher.py -v)",
       "Bash(.venv/bin/python -m pytest tests/ -q)",
-      "Bash(.venv/bin/python -c \"import streamlit.runtime; print\\(dir\\(streamlit.runtime\\)\\); print\\(streamlit.runtime.exists\\(\\)\\)\")"
+      "Bash(.venv/bin/python -c \"import streamlit.runtime; print\\(dir\\(streamlit.runtime\\)\\); print\\(streamlit.runtime.exists\\(\\)\\)\")",
+      "Bash(.venv/bin/python -m pytest tests/test_filters.py -v)",
+      "Bash(.venv/bin/python -m pytest --tb=short -q)",
+      "mcp__Control_Chrome__list_tabs",
+      "mcp__Control_Chrome__open_url",
+      "mcp__Control_Chrome__get_current_tab",
+      "mcp__Control_Chrome__execute_javascript"
     ]
   }
 }

@@ -14,6 +14,7 @@ from stats.percentiles import (
     get_all_color_tiers,
     get_all_percentiles,
 )
+from stats.filters import SplitFilters, apply_filters
 from stats.splits import get_splits
 from ui.components import (
     percentile_bar_chart,
@@ -96,6 +97,21 @@ with st.sidebar:
         if st.button("Clear player", use_container_width=True):
             st.session_state["_clear_player_pending"] = True
             st.rerun()
+
+    with st.expander("Filters"):
+        inning_filter_on = st.checkbox("Filter by inning")
+        if inning_filter_on:
+            inning_range = st.slider(
+                "Inning range",
+                min_value=1,
+                max_value=9,
+                value=(1, 9),
+            )
+            inning_min, inning_max = inning_range
+        else:
+            inning_min, inning_max = None, None
+
+    filters = SplitFilters(inning_min=inning_min, inning_max=inning_max)
 
     st.divider()
     st.caption("Data via pybaseball / Baseball Savant")
@@ -205,7 +221,8 @@ if statcast_df.empty:
         "may not yet be available."
     )
 else:
-    splits_df = get_splits(statcast_df, split_type)
+    filtered_df = apply_filters(statcast_df, filters)
+    splits_df = get_splits(filtered_df, split_type)
     if splits_df.empty or splits_df["PA"].sum() == 0:
         st.info("No plate appearances found for the selected split.")
     else:

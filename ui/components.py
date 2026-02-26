@@ -100,24 +100,25 @@ def build_chart_df(
 _CARD_CSS = """
 <style>
 .stat-card {{
-    border: 1px solid #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 10px;
     padding: 14px 10px 12px;
     text-align: center;
-    background: #fafafa;
+    background: #1e2029;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }}
 .stat-label {{
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #888;
+    color: rgba(255, 255, 255, 0.55);
     margin-bottom: 6px;
 }}
 .stat-value {{
     font-size: 26px;
     font-weight: 800;
-    color: #111;
+    color: #f0f0f0;
     line-height: 1.1;
     margin-bottom: 8px;
 }}
