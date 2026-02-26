@@ -304,7 +304,7 @@ fg_id = int(player_row["IDfg"])
 team  = str(player_row.get("Team", "—"))
 
 with st.spinner("Resolving player ID…"):
-    mlbam_id = get_mlbam_id(fg_id)
+    mlbam_id = get_mlbam_id(fg_id, player_name=selected_name)
 
 if mlbam_id is None:
     st.error(f"Could not resolve a Statcast ID for {selected_name}.")

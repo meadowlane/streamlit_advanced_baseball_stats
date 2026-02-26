@@ -95,12 +95,28 @@ def get_player_row(batting_df: pd.DataFrame, name: str) -> pd.Series | None:
 
 
 @st.cache_data(ttl=_TTL_IDS, show_spinner=False)
-def get_mlbam_id(fg_id: int) -> int | None:
-    """Convert a FanGraphs player ID to an MLBAM ID. Cached for 24 h."""
+def get_mlbam_id(fg_id: int, player_name: str | None = None) -> int | None:
+    """Convert a FanGraphs player ID to an MLBAM ID. Cached for 24 h.
+
+    Falls back to a live name-based lookup when the static Chadwick register
+    doesn't contain the player (e.g. rookies who debuted mid-season).
+    """
     result = playerid_reverse_lookup([fg_id], key_type="fangraphs")
-    if result.empty or result["key_mlbam"].isna().all():
-        return None
-    return int(result["key_mlbam"].iloc[0])
+    if not result.empty and not result["key_mlbam"].isna().all():
+        return int(result["key_mlbam"].iloc[0])
+
+    # Static register miss — try live name lookup as fallback.
+    if player_name:
+        parts = player_name.strip().split(" ", 1)
+        first = parts[0]
+        last  = parts[1] if len(parts) > 1 else ""
+        name_result = _lookup_player(last, first)
+        if not name_result.empty and "key_mlbam" in name_result.columns:
+            valid = name_result["key_mlbam"].dropna()
+            if not valid.empty:
+                return int(valid.iloc[0])
+
+    return None
 
 
 def assert_core_stats_present(df: pd.DataFrame) -> None:
