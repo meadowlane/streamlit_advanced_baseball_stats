@@ -69,14 +69,16 @@ def build_chart_df(
     percentiles: dict[str, float],
     color_tiers: dict[str, dict[str, str]],
     stat_values: dict[str, float | None],
+    stats_order: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build the DataFrame fed to the percentile bar chart.
 
     Returns columns: stat, percentile, color, label, direction_note.
     Pure function — no Streamlit calls.
     """
+    order = stats_order if stats_order is not None else _ORDERED_STATS
     rows = []
-    for stat in _ORDERED_STATS:
+    for stat in order:
         pct = percentiles.get(stat, np.nan)
         color = color_tiers.get(stat, {}).get("hex", "#95A5A6")
         val_str = format_stat_value(stat, stat_values.get(stat))
@@ -164,10 +166,15 @@ def stat_cards_row(
     stat_values: dict[str, float | None],
     percentiles: dict[str, float],
     color_tiers: dict[str, dict[str, str]],
+    stats_order: list[str] | None = None,
 ) -> None:
     """Render all 6 core stat cards in a single row of columns."""
-    cols = st.columns(len(_ORDERED_STATS))
-    for col, stat in zip(cols, _ORDERED_STATS):
+    order = stats_order if stats_order is not None else _ORDERED_STATS
+    if not order:
+        st.info("No stats selected.")
+        return
+    cols = st.columns(len(order))
+    for col, stat in zip(cols, order):
         with col:
             stat_card(
                 label=stat,
@@ -185,9 +192,14 @@ def percentile_bar_chart(
     percentiles: dict[str, float],
     color_tiers: dict[str, dict[str, str]],
     stat_values: dict[str, float | None],
+    stats_order: list[str] | None = None,
 ) -> None:
     """Render a horizontal Plotly bar chart of all 6 percentile ranks."""
-    df = build_chart_df(percentiles, color_tiers, stat_values)
+    df = build_chart_df(percentiles, color_tiers, stat_values, stats_order=stats_order)
+
+    if df.empty:
+        st.info("No stats selected.")
+        return
 
     fig = go.Figure()
 

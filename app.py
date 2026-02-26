@@ -18,7 +18,7 @@ from stats.filters import (
     rows_to_split_filters,
     summarize_filter_rows,
 )
-from stats.splits import _compute_stats, get_sample_sizes, get_splits
+from stats.splits import STAT_REGISTRY, _compute_stats, get_sample_sizes, get_splits
 from ui.components import (
     percentile_bar_chart,
     player_header,
@@ -94,6 +94,48 @@ with st.sidebar:
 
     split_type_label = st.radio("Split", list(SPLIT_TYPE_MAP.keys()))
     split_type = SPLIT_TYPE_MAP[split_type_label]
+
+    if "selected_stats_requested" not in st.session_state:
+        st.session_state["selected_stats_requested"] = CORE_STATS.copy()
+
+    with st.expander("Stats to show", expanded=False):
+        for stat in CORE_STATS:
+            k = f"stat_show_{stat}"
+            if k not in st.session_state:
+                st.session_state[k] = stat in st.session_state["selected_stats_requested"]
+
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        with btn_col1:
+            if st.button("Reset", key="stats_reset_defaults", use_container_width=True):
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = True
+                st.rerun()
+        with btn_col2:
+            if st.button("All", key="stats_select_all", use_container_width=True):
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = True
+                st.rerun()
+        with btn_col3:
+            if st.button("None", key="stats_select_none", use_container_width=True):
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = False
+                st.rerun()
+
+        selected_count = sum(
+            1 for stat in CORE_STATS if st.session_state.get(f"stat_show_{stat}", False)
+        )
+        st.caption(f"Showing {selected_count} stats")
+
+        cols = st.columns(2)
+        for i, stat in enumerate(CORE_STATS):
+            with cols[i % 2]:
+                st.checkbox(stat, key=f"stat_show_{stat}")
+
+    selected_stats_requested = [
+        stat for stat in CORE_STATS
+        if st.session_state.get(f"stat_show_{stat}", False)
+    ]
+    st.session_state["selected_stats_requested"] = selected_stats_requested
 
     st.divider()
 
@@ -312,6 +354,25 @@ statcast_df = get_prepared_df_cached(
 filtered_df = apply_filters(statcast_df, filters)
 sample_sizes = get_sample_sizes(filtered_df)
 
+missing_stat_requirements: dict[str, list[str]] = {}
+selected_stats: list[str] = []
+for stat in selected_stats_requested:
+    spec = STAT_REGISTRY.get(stat)
+    if spec is None:
+        continue
+    missing_cols = [col for col in spec.required_cols if col not in statcast_df.columns]
+    if missing_cols:
+        missing_stat_requirements[stat] = missing_cols
+        continue
+    selected_stats.append(stat)
+
+if missing_stat_requirements:
+    missing_text = ", ".join(
+        f"{stat} (missing: {', '.join(cols)})"
+        for stat, cols in missing_stat_requirements.items()
+    )
+    st.warning(f"Some selected stats were skipped due to missing data columns: {missing_text}.")
+
 # ---------------------------------------------------------------------------
 # Build player stats from filtered Statcast data.
 # Distributions use the full-season league (correct reference population) so
@@ -319,7 +380,7 @@ sample_sizes = get_sample_sizes(filtered_df)
 # ---------------------------------------------------------------------------
 
 _raw         = _compute_stats(filtered_df)
-player_stats = {stat: _raw.get(stat) for stat in CORE_STATS}
+player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
 distributions = build_league_distributions(season_df)
 percentiles   = get_all_percentiles(player_stats, distributions)
@@ -355,7 +416,7 @@ if sample_sizes["approx_PA"] is not None:
 st.caption(f"Sample size: {' | '.join(sample_parts)}")
 
 st.subheader("Season Stats")
-stat_cards_row(player_stats, percentiles, color_tiers)
+stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
 
 st.divider()
 
@@ -365,7 +426,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader("Percentile Rankings vs. League")
-percentile_bar_chart(percentiles, color_tiers, player_stats)
+percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
 
 st.divider()
 
@@ -387,7 +448,8 @@ else:
     if splits_df.empty or splits_df["PA"].sum() == 0:
         st.info("No plate appearances found for the selected split.")
     else:
-        split_table(splits_df)
+        split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
+        split_table(splits_df[split_cols])
 
 st.divider()
 
