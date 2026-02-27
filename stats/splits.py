@@ -21,6 +21,8 @@ from typing import Callable, Literal
 
 import pandas as pd
 
+from stats.filters import SplitFilters, apply_filters, get_prepared_df_cached
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -347,3 +349,64 @@ def get_splits(df: pd.DataFrame, split_type: str) -> pd.DataFrame:
     if split_type not in dispatch:
         raise ValueError(f"Unknown split_type {split_type!r}. Choose from: {list(dispatch)}")
     return dispatch[split_type](df)
+
+
+def get_trend_stats(
+    mlbam_id: int,
+    seasons: list[int],
+    player_type: str,
+    filters: SplitFilters,
+    fetch_fn: Callable[[int, int], pd.DataFrame],
+    prepare_cache: dict,
+) -> list[dict]:
+    """Return per-season stat dicts for trend charting.
+
+    For each season in *seasons*, fetches raw Statcast data via *fetch_fn*,
+    prepares it (shared with the single-season view via *prepare_cache*),
+    applies *filters*, then computes all 6 core stats.
+
+    Parameters
+    ----------
+    mlbam_id : int
+        MLBAM player ID.
+    seasons : list[int]
+        Ordered list of season years to include (e.g. [2019, 2020, ..., 2025]).
+    player_type : str
+        Player type string (currently always "Batter"); used as the third
+        component of the prepare_cache key to match the existing convention.
+    filters : SplitFilters
+        Active filter configuration. Applied identically within each season.
+    fetch_fn : Callable[[int, int], pd.DataFrame]
+        Callable with signature ``(mlbam_id, season) -> DataFrame``.
+        Production code passes ``get_statcast_batter``; tests pass a stub.
+        This injection point also serves as the extension seam for pre-2015
+        data sources — any adapter that satisfies the signature and produces a
+        DataFrame with compatible columns will work transparently.
+    prepare_cache : dict
+        The session-state memoisation dict keyed by ``(player_id, season, type)``.
+        Shared with the single-season view so prepared DataFrames are reused
+        when both views are active in the same session.
+
+    Returns
+    -------
+    list[dict]
+        One dict per season in the same order as *seasons*. Each dict has:
+        ``{"season": int, "PA": int, "wOBA": float|None, "xwOBA": float|None,
+        "K%": float|None, "BB%": float|None, "HardHit%": float|None,
+        "Barrel%": float|None}``.
+        Seasons with no data (empty fetch) produce PA=0 and all stats None.
+    """
+    results: list[dict] = []
+    for season in seasons:
+        raw_df = fetch_fn(mlbam_id, season)
+        cache_key = (int(mlbam_id), int(season), str(player_type))
+        prepared = get_prepared_df_cached(raw_df, prepare_cache, cache_key)
+        filtered = apply_filters(prepared, filters)
+        stats = _compute_stats(filtered)
+        sample_sizes = get_sample_sizes(filtered)
+        stats["season"] = season
+        stats["n_pitches"] = sample_sizes.get("N_pitches")
+        stats["n_bip"] = sample_sizes.get("N_BIP")
+        stats["approx_pa"] = sample_sizes.get("approx_PA")
+        results.append(stats)
+    return results
