@@ -214,7 +214,7 @@ with st.sidebar:
         st.session_state["season_selectbox"] = SEASONS[0]
 
     with st.form("nl_query_form"):
-        st.text_input("Type a query…", key="nl_query_input")
+        st.text_area("Type a query…", key="nl_query_input", height=100)
         nl_run = st.form_submit_button("Run", use_container_width=True)
 
     if nl_run:
