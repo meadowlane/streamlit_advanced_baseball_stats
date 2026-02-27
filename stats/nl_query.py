@@ -145,29 +145,25 @@ def parse_nl_query(
 
     Output keys:
         raw_query, cleaned_query, player_a_fragment, player_b_fragment,
-        player_a, player_b, comparison_mode, season, selected_stats,
-        filter_rows, warnings
+        player_a, player_b, comparison_mode, season_a, season_b,
+        link_seasons, season, selected_stats, filter_rows, warnings
     """
     text = (query or "").strip()
     warnings: list[str] = []
-
-    season = extract_last_year(text)
-    if season is not None and valid_seasons is not None and season not in valid_seasons:
-        warnings.append(f"Parsed season {season} is not in available seasons; season unchanged.")
-        season = None
+    parsed_years = [int(m.group(0)) for m in _YEAR_RE.finditer(text)]
 
     cleaned_query = _remove_global_modifiers(text)
 
     spans: list[tuple[int, int]] = []
     stats_allowed = list(allowed_stats) if allowed_stats is not None else CORE_STATS
-    selected_stats, stat_spans = _parse_stats(cleaned_query, stats_allowed)
+    selected_stats, stat_spans = _parse_stats(text, stats_allowed)
     spans.extend(stat_spans)
 
-    filter_values, filter_positions, filter_spans, filter_warnings = _parse_filters(cleaned_query)
+    filter_values, filter_positions, filter_spans, filter_warnings = _parse_filters(text)
     warnings.extend(filter_warnings)
     spans.extend(filter_spans)
 
-    player_text = _strip_spans(cleaned_query, spans)
+    player_text = _strip_spans(text, spans)
     player_text = _clean_player_fragment(player_text)
 
     comparison_mode = False
@@ -175,33 +171,64 @@ def parse_nl_query(
     player_b_fragment: str | None = None
     player_a: str | None = None
     player_b: str | None = None
+    season_a: int | None = None
+    season_b: int | None = None
+    link_seasons = True
 
     comp_a_frag, comp_b_frag = _extract_comparison_fragments(player_text)
     comparison_intent = bool(comp_a_frag and comp_b_frag) or bool(_COMPARISON_HINT_RE.search(player_text))
     if comparison_intent and comp_a_frag is not None and comp_b_frag is not None:
         comparison_mode = True
-        player_a_fragment = comp_a_frag
-        player_b_fragment = comp_b_frag
 
-        resolved_a, warn_a, _ = _resolve_player_name(comp_a_frag, player_names)
-        resolved_b, warn_b, _ = _resolve_player_name(comp_b_frag, player_names)
+        frag_year_a, cleaned_frag_a = _extract_fragment_season(comp_a_frag, valid_seasons, warnings)
+        frag_year_b, cleaned_frag_b = _extract_fragment_season(comp_b_frag, valid_seasons, warnings)
+        player_a_fragment = cleaned_frag_a
+        player_b_fragment = cleaned_frag_b
+
+        resolved_a, warn_a, _ = _resolve_player_name(cleaned_frag_a, player_names)
+        resolved_b, warn_b, _ = _resolve_player_name(cleaned_frag_b, player_names)
 
         if resolved_a is None:
             warnings.append(
-                f"Could not resolve Player A from '{comp_a_frag}' (try full name)."
+                f"Could not resolve Player A from '{cleaned_frag_a}' (try full name)."
             )
         elif warn_a:
             warnings.append(warn_a)
 
         if resolved_b is None:
             warnings.append(
-                f"Could not resolve Player B from '{comp_b_frag}' (try full name)."
+                f"Could not resolve Player B from '{cleaned_frag_b}' (try full name)."
             )
         elif warn_b:
             warnings.append(warn_b)
 
         player_a = resolved_a
         player_b = resolved_b
+
+        if frag_year_a is not None and frag_year_b is not None:
+            season_a = frag_year_a
+            season_b = frag_year_b
+            link_seasons = season_a == season_b
+        elif frag_year_a is not None or frag_year_b is not None:
+            same_year = frag_year_a if frag_year_a is not None else frag_year_b
+            season_a = same_year
+            season_b = same_year
+            link_seasons = True
+        elif len(parsed_years) >= 2:
+            season_a = _normalize_parsed_season(parsed_years[0], valid_seasons, warnings)
+            season_b = _normalize_parsed_season(parsed_years[1], valid_seasons, warnings)
+            if season_a is not None and season_b is not None:
+                link_seasons = season_a == season_b
+            elif season_a is not None or season_b is not None:
+                same_year = season_a if season_a is not None else season_b
+                season_a = same_year
+                season_b = same_year
+                link_seasons = True
+        elif len(parsed_years) == 1:
+            single_year = _normalize_parsed_season(parsed_years[0], valid_seasons, warnings)
+            season_a = single_year
+            season_b = single_year
+            link_seasons = True
 
         if resolved_a is not None and resolved_b is not None and resolved_a == resolved_b:
             warnings.append("Comparison players resolved to the same player; pick two distinct names.")
@@ -213,24 +240,65 @@ def parse_nl_query(
             player_b = None
             player_b_fragment = None
             player_a_fragment = player_text if player_text else None
-            player_a, warn_single, _ = _resolve_player_name(player_a_fragment or "", player_names)
+            single_year, cleaned_single_frag = _extract_fragment_season(
+                player_a_fragment or "",
+                valid_seasons,
+                warnings,
+            )
+            player_a_fragment = cleaned_single_frag
+            player_a, warn_single, _ = _resolve_player_name(cleaned_single_frag, player_names)
             if warn_single:
                 warnings.append(warn_single)
+            if single_year is not None:
+                season_a = single_year
+                season_b = single_year
+                link_seasons = True
+            else:
+                season_a = None
+                season_b = None
+                link_seasons = True
     elif comparison_intent:
         warnings.append(
             "Could not parse both comparison players; interpreted as a single-player query."
         )
         player_a_fragment = player_text if player_text else None
-        player_a, warn_single, _ = _resolve_player_name(player_a_fragment or "", player_names)
+        single_year, cleaned_single_frag = _extract_fragment_season(
+            player_a_fragment or "",
+            valid_seasons,
+            warnings,
+        )
+        player_a_fragment = cleaned_single_frag
+        player_a, warn_single, _ = _resolve_player_name(cleaned_single_frag, player_names)
         if warn_single:
             warnings.append(warn_single)
+        if single_year is not None:
+            season_a = single_year
+            season_b = single_year
+            link_seasons = True
     else:
         player_a_fragment = player_text if player_text else None
-        player_a, warn_single, _ = _resolve_player_name(player_a_fragment or "", player_names)
+        single_year, cleaned_single_frag = _extract_fragment_season(
+            player_a_fragment or "",
+            valid_seasons,
+            warnings,
+        )
+        player_a_fragment = cleaned_single_frag
+        player_a, warn_single, _ = _resolve_player_name(cleaned_single_frag, player_names)
         if warn_single:
             warnings.append(warn_single)
+        if single_year is not None:
+            season_a = single_year
+            season_b = single_year
+            link_seasons = True
+
+    if season_a is None and season_b is None and parsed_years:
+        fallback_year = _normalize_parsed_season(parsed_years[-1], valid_seasons, warnings)
+        season_a = fallback_year
+        season_b = fallback_year
+        link_seasons = True
 
     filter_rows = _build_filter_rows(filter_values, filter_positions, warnings)
+    season = season_a
 
     return {
         "raw_query": text,
@@ -240,6 +308,9 @@ def parse_nl_query(
         "player_a": player_a,
         "player_b": player_b,
         "comparison_mode": comparison_mode,
+        "season_a": season_a,
+        "season_b": season_b,
+        "link_seasons": link_seasons,
         "season": season,
         "selected_stats": selected_stats,
         "filter_rows": filter_rows,
@@ -566,6 +637,30 @@ def _normalize_name(text: str) -> str:
     cleaned = re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower())
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
+
+
+def _normalize_parsed_season(
+    season: int | None,
+    valid_seasons: set[int] | None,
+    warnings: list[str],
+) -> int | None:
+    if season is None:
+        return None
+    if valid_seasons is not None and season not in valid_seasons:
+        warnings.append(f"Parsed season {season} is not in available seasons; season unchanged.")
+        return None
+    return season
+
+
+def _extract_fragment_season(
+    fragment: str,
+    valid_seasons: set[int] | None,
+    warnings: list[str],
+) -> tuple[int | None, str]:
+    years = [int(m.group(0)) for m in _YEAR_RE.finditer(fragment or "")]
+    parsed_season = _normalize_parsed_season(years[-1], valid_seasons, warnings) if years else None
+    cleaned = _YEAR_RE.sub(" ", fragment or "")
+    return parsed_season, _clean_player_fragment(cleaned)
 
 
 def _remove_global_modifiers(text: str) -> str:

@@ -1,3 +1,5 @@
+import datetime as dt
+
 import streamlit as st
 
 from data.fetcher import (
@@ -41,8 +43,10 @@ st.set_page_config(
 # Constants
 # ---------------------------------------------------------------------------
 
-SEASONS = [2025, 2024, 2023, 2022]
-STATCAST_SEASONS = list(range(2025, 2014, -1))  # 2025–2015 descending; extend each year
+STATCAST_START_YEAR = 2015
+CURRENT_YEAR = dt.date.today().year
+STATCAST_SEASONS = list(range(CURRENT_YEAR, STATCAST_START_YEAR - 1, -1))
+SEASONS = STATCAST_SEASONS
 FEATURE_PITCHERS = False
 DEFAULT_PLAYER_TYPE = "Batter"
 
@@ -213,8 +217,22 @@ with st.sidebar:
     st.title("⚾ MLB Splits")
     st.divider()
 
-    if "season_selectbox" not in st.session_state:
-        st.session_state["season_selectbox"] = SEASONS[0]
+    if st.session_state.get("season_a") not in STATCAST_SEASONS:
+        if "season_a" in st.session_state:
+            st.warning(
+                f"Season A {st.session_state['season_a']} is outside supported Statcast seasons "
+                f"({STATCAST_START_YEAR}-{CURRENT_YEAR}); reset to {STATCAST_SEASONS[0]}."
+            )
+        st.session_state["season_a"] = STATCAST_SEASONS[0]
+    if st.session_state.get("season_b") not in STATCAST_SEASONS:
+        if "season_b" in st.session_state:
+            st.warning(
+                f"Season B {st.session_state['season_b']} is outside supported Statcast seasons "
+                f"({STATCAST_START_YEAR}-{CURRENT_YEAR}); reset to {st.session_state['season_a']}."
+            )
+        st.session_state["season_b"] = st.session_state["season_a"]
+    if "link_seasons" not in st.session_state:
+        st.session_state["link_seasons"] = True
 
     with st.form("nl_query_form"):
         st.text_area("Type a query…", key="nl_query_input", height=100)
@@ -229,6 +247,9 @@ with st.sidebar:
                 "player_a": None,
                 "player_b": None,
                 "comparison_mode": False,
+                "season_a": None,
+                "season_b": None,
+                "link_seasons": True,
                 "season": None,
                 "selected_stats": [],
                 "filter_rows": [],
@@ -237,7 +258,7 @@ with st.sidebar:
             st.rerun()
 
         parsed_year = extract_last_year(raw_query)
-        lookup_season = parsed_year if parsed_year in SEASONS else st.session_state["season_selectbox"]
+        lookup_season = parsed_year if parsed_year in SEASONS else st.session_state["season_a"]
 
         with st.spinner("Parsing query…"):
             lookup_df = get_batting_stats(lookup_season)
@@ -255,9 +276,15 @@ with st.sidebar:
 
         st.session_state["_nl_parsed_preview"] = parsed_intent
 
-        parsed_season = parsed_intent.get("season")
-        if parsed_season in SEASONS:
-            st.session_state["season_selectbox"] = parsed_season
+        parsed_season_a = parsed_intent.get("season_a")
+        parsed_season_b = parsed_intent.get("season_b")
+        parsed_link_seasons = parsed_intent.get("link_seasons")
+        if parsed_season_a in SEASONS:
+            st.session_state["season_a"] = parsed_season_a
+        if parsed_season_b in SEASONS:
+            st.session_state["season_b"] = parsed_season_b
+        if isinstance(parsed_link_seasons, bool):
+            st.session_state["link_seasons"] = parsed_link_seasons
 
         parsed_player_a = parsed_intent.get("player_a")
         if parsed_player_a is not None:
@@ -271,6 +298,7 @@ with st.sidebar:
         else:
             st.session_state["comparison_mode"] = False
             st.session_state["player_b_selectbox"] = None
+            st.session_state["link_seasons"] = True
 
         parsed_rows = parsed_intent.get("filter_rows", [])
         st.session_state["filter_rows"] = parsed_rows
@@ -296,39 +324,35 @@ with st.sidebar:
     if FEATURE_PITCHERS:
         player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
 
-    if st.session_state["season_selectbox"] not in SEASONS:
-        st.session_state["season_selectbox"] = SEASONS[0]
-    season = st.selectbox("Season", options=SEASONS, key="season_selectbox")
+    if st.session_state["season_a"] not in SEASONS:
+        st.session_state["season_a"] = SEASONS[0]
+    season_a = st.selectbox("Season A", options=SEASONS, key="season_a")
+    if st.session_state.get("link_seasons", True):
+        st.session_state["season_b"] = season_a
 
     split_type_label = st.radio("Split", list(SPLIT_TYPE_MAP.keys()))
     split_type = SPLIT_TYPE_MAP[split_type_label]
     comparison_mode = st.checkbox("Comparison mode", key="comparison_mode")
 
     # Per-side season state — allows cross-year comparison (e.g. 2025 A vs 2024 B).
-    # When comparison_mode is off, season_a == season_b == top-level season.
     if comparison_mode:
-        st.session_state.setdefault("link_seasons", True)
         link_seasons = st.checkbox(
             "Link seasons",
             key="link_seasons",
             help="Unlink to compare players across different seasons",
         )
-        if not link_seasons:
-            if st.session_state.get("season_a_selectbox") not in STATCAST_SEASONS:
-                st.session_state["season_a_selectbox"] = season
-            if st.session_state.get("season_b_selectbox") not in STATCAST_SEASONS:
-                st.session_state["season_b_selectbox"] = season
-            _ss_col_a, _ss_col_b = st.columns(2)
-            with _ss_col_a:
-                st.selectbox("Player A season", STATCAST_SEASONS, key="season_a_selectbox")
-            with _ss_col_b:
-                st.selectbox("Player B season", STATCAST_SEASONS, key="season_b_selectbox")
+        if link_seasons:
+            st.session_state["season_b"] = season_a
+        else:
+            if st.session_state.get("season_b") not in STATCAST_SEASONS:
+                st.session_state["season_b"] = season_a
+            st.selectbox("Season B", STATCAST_SEASONS, key="season_b")
     else:
         link_seasons = True
+        st.session_state["link_seasons"] = True
+        st.session_state["season_b"] = season_a
 
-    # Effective seasons used throughout the rest of the app.
-    season_a = season if (not comparison_mode or link_seasons) else st.session_state["season_a_selectbox"]
-    season_b = season if (not comparison_mode or link_seasons) else st.session_state["season_b_selectbox"]
+    season_b = st.session_state["season_b"]
 
     if "selected_stats_requested" not in st.session_state:
         st.session_state["selected_stats_requested"] = CORE_STATS.copy()
@@ -866,7 +890,10 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 with st.expander("Player Trend by Year", expanded=False):
-    trend_seasons = sorted(s for s in STATCAST_SEASONS if s <= season_a)
+    trend_seasons_a = sorted(s for s in STATCAST_SEASONS if s <= season_a)
+    trend_seasons_b = sorted(s for s in STATCAST_SEASONS if s <= season_b)
+    trend_control_max = max(season_a, season_b) if comparison_mode else season_a
+    trend_seasons_control = sorted(s for s in STATCAST_SEASONS if s <= trend_control_max)
     available_trend_stats = selected_stats if selected_stats else list(STAT_REGISTRY.keys())
     trend_stat_default = "xwOBA" if "xwOBA" in available_trend_stats else available_trend_stats[0]
     selected_trend_stat = st.selectbox(
@@ -876,11 +903,18 @@ with st.expander("Player Trend by Year", expanded=False):
         key="trend_stat_key",
     )
 
-    trend_year_min = trend_seasons[0]
-    trend_year_max = trend_seasons[-1]
+    trend_year_min = trend_seasons_control[0]
+    trend_year_max = trend_seasons_control[-1]
     trend_default_start = max(trend_year_min, trend_year_max - 6)
     if "trend_year_range" not in st.session_state:
         st.session_state["trend_year_range"] = (trend_default_start, trend_year_max)
+    else:
+        existing_start, existing_end = st.session_state["trend_year_range"]
+        clamped_start = min(max(int(existing_start), trend_year_min), trend_year_max)
+        clamped_end = min(max(int(existing_end), trend_year_min), trend_year_max)
+        if clamped_start > clamped_end:
+            clamped_start = clamped_end
+        st.session_state["trend_year_range"] = (clamped_start, clamped_end)
     trend_year_cols = st.columns([5, 1])
     with trend_year_cols[1]:
         all_years_clicked = st.button("All years", key="trend_all_years_btn")
@@ -905,7 +939,7 @@ with st.expander("Player Trend by Year", expanded=False):
     with st.spinner("Loading trend data… (first load may take ~30s)"):
         trend_data_a = get_trend_stats(
             mlbam_id,
-            trend_seasons,
+            trend_seasons_a,
             player_type,
             trend_filters,
             get_statcast_batter,
@@ -915,7 +949,7 @@ with st.expander("Player Trend by Year", expanded=False):
         if comparison_mode and mlbam_id_b is not None:
             trend_data_b_trend = get_trend_stats(
                 mlbam_id_b,
-                trend_seasons,
+                trend_seasons_b,
                 player_type,
                 trend_filters,
                 get_statcast_batter,

@@ -64,11 +64,16 @@ def test_ambiguous_comparison_keeps_mode_enabled():
 def test_parses_season_year():
     parsed = _parse("Gunnar Henderson 2024")
     assert parsed["season"] == 2024
+    assert parsed["season_a"] == 2024
+    assert parsed["season_b"] == 2024
+    assert parsed["link_seasons"] is True
 
 
 def test_invalid_season_is_dropped_with_warning():
     parsed = _parse("Gunnar Henderson 2019")
     assert parsed["season"] is None
+    assert parsed["season_a"] is None
+    assert parsed["season_b"] is None
     assert any("season 2019" in warning.lower() for warning in parsed["warnings"])
 
 
@@ -156,6 +161,9 @@ def test_filter_phrase_vs_lhp_does_not_trigger_comparison():
 def test_regression_pete_alonzo_vs_gunnar_in_2024():
     parsed = _parse("Pete Alonzo vs Gunnar in 2024")
     assert parsed["season"] == 2024
+    assert parsed["season_a"] == 2024
+    assert parsed["season_b"] == 2024
+    assert parsed["link_seasons"] is True
     assert parsed["cleaned_query"] == "Pete Alonzo vs Gunnar"
     assert parsed["comparison_mode"] is True
     assert parsed["player_a_fragment"] == "Pete Alonzo"
@@ -166,6 +174,9 @@ def test_regression_pete_alonzo_vs_gunnar_in_2024():
 def test_regression_pete_alonso_vs_gunnar_henderson_2024():
     parsed = _parse("Pete Alonso vs Gunnar Henderson 2024")
     assert parsed["season"] == 2024
+    assert parsed["season_a"] == 2024
+    assert parsed["season_b"] == 2024
+    assert parsed["link_seasons"] is True
     assert parsed["comparison_mode"] is True
     assert parsed["player_a_fragment"] == "Pete Alonso"
     assert parsed["player_b_fragment"] == "Gunnar Henderson"
@@ -176,10 +187,33 @@ def test_regression_pete_alonso_vs_gunnar_henderson_2024():
 def test_regression_compare_pete_alonso_and_gunnar_henderson_in_2024():
     parsed = _parse("compare Pete Alonso and Gunnar Henderson in 2024")
     assert parsed["season"] == 2024
+    assert parsed["season_a"] == 2024
+    assert parsed["season_b"] == 2024
+    assert parsed["link_seasons"] is True
     assert parsed["cleaned_query"] == "compare Pete Alonso and Gunnar Henderson"
     assert parsed["comparison_mode"] is True
     assert parsed["player_a_fragment"] == "Pete Alonso"
     assert parsed["player_b_fragment"] == "Gunnar Henderson"
+
+
+def test_cross_year_comparison_year_then_name():
+    parsed = _parse("2025 Pete Alonso vs 2024 Gunnar Henderson")
+    assert parsed["comparison_mode"] is True
+    assert parsed["player_a"] == "Pete Alonso"
+    assert parsed["player_b"] == "Gunnar Henderson"
+    assert parsed["season_a"] == 2025
+    assert parsed["season_b"] == 2024
+    assert parsed["link_seasons"] is False
+
+
+def test_cross_year_comparison_name_then_year():
+    parsed = _parse("Pete Alonso 2025 vs Gunnar Henderson 2024")
+    assert parsed["comparison_mode"] is True
+    assert parsed["player_a"] == "Pete Alonso"
+    assert parsed["player_b"] == "Gunnar Henderson"
+    assert parsed["season_a"] == 2025
+    assert parsed["season_b"] == 2024
+    assert parsed["link_seasons"] is False
 
 
 def test_comparison_kept_when_b_unresolved():
