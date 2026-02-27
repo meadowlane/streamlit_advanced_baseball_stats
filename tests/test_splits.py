@@ -16,10 +16,12 @@ from stats.splits import (
     split_home_away,
     split_by_month,
     get_splits,
+    get_trend_stats,
     SPLIT_COLS,
     PA_EVENTS,
     BARREL_CODE,
 )
+from stats.filters import SplitFilters, prepare_df
 
 
 # ---------------------------------------------------------------------------
@@ -375,3 +377,110 @@ class TestGetSplits:
     def test_invalid_split_type_raises(self):
         with pytest.raises(ValueError, match="Unknown split_type"):
             get_splits(_make_df(), "invalid")
+
+
+# ---------------------------------------------------------------------------
+# get_trend_stats
+# ---------------------------------------------------------------------------
+
+class TestGetTrendStats:
+    """Tests for get_trend_stats — uses injected fetch_fn stubs."""
+
+    _STAT_KEYS = {"PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"}
+
+    def _stub(self, df: "pd.DataFrame"):
+        """Return a fetch_fn that always returns the given DataFrame."""
+        def fetch_fn(mlbam_id: int, season: int) -> pd.DataFrame:
+            return df.copy()
+        return fetch_fn
+
+    def test_returns_one_dict_per_season(self):
+        stub = self._stub(_make_df(30))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2022, 2023, 2024],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+        )
+        assert len(result) == 3
+
+    def test_season_key_present_in_each_row(self):
+        stub = self._stub(_make_df(30))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2022, 2023],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+        )
+        assert result[0]["season"] == 2022
+        assert result[1]["season"] == 2023
+
+    def test_all_stat_keys_present_in_each_row(self):
+        stub = self._stub(_make_df(30))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2024, 2025],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+        )
+        for row in result:
+            assert self._STAT_KEYS.issubset(row.keys()), (
+                f"Missing keys: {self._STAT_KEYS - row.keys()}"
+            )
+
+    def test_empty_df_produces_none_stats(self):
+        stub = self._stub(_empty_df())
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2024],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+        )
+        assert len(result) == 1
+        row = result[0]
+        assert row["PA"] == 0
+        for stat in ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]:
+            assert row[stat] is None, f"Expected {stat} to be None for empty df"
+
+    def test_empty_seasons_list_returns_empty(self):
+        stub = self._stub(_make_df(30))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+        )
+        assert result == []
+
+    def test_filters_applied_per_season(self):
+        # Half RHP, half LHP — pitcher_hand filter should halve PA
+        df = _make_df(30, p_throws=["R", "L"])  # alternating: 15 R, 15 L
+        stub = self._stub(df)
+        filters = SplitFilters(pitcher_hand="R")
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2024],
+            player_type="Batter", filters=filters,
+            fetch_fn=stub, prepare_cache={},
+        )
+        assert result[0]["PA"] == 15
+
+    def test_prepare_cache_populated_after_call(self):
+        stub = self._stub(_make_df(30))
+        cache: dict = {}
+        get_trend_stats(
+            mlbam_id=7, seasons=[2023, 2024],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache=cache,
+        )
+        assert (7, 2023, "Batter") in cache
+        assert (7, 2024, "Batter") in cache
+
+    def test_prepare_cache_hit_reuses_prepared_df(self):
+        # Pre-populate cache with a known prepared df (30 PA)
+        known_df = prepare_df(_make_df(30))
+        cache = {(1, 2024, "Batter"): known_df}
+
+        # Stub returns a different df (10 PA); cache hit should win
+        different_stub = self._stub(_make_df(10))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2024],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=different_stub, prepare_cache=cache,
+        )
+        # PA should be 30 (from cached df), not 10 (from stub)
+        assert result[0]["PA"] == 30

@@ -31,7 +31,11 @@
       "Bash(pytest --ignore=tests/test_fetcher.py -v)",
       "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py -v)",
       "Bash(pytest tests/test_filters.py -v -x)",
-      "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py -q)"
+      "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py -q)",
+      "Bash(python -m pytest tests/test_splits.py -v)",
+      "Bash(python3 -m pytest tests/test_splits.py -v)",
+      "Bash(pytest tests/test_splits.py -v)",
+      "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py tests/test_nl_query.py -v)"
     ]
   }
 }
