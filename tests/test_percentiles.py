@@ -9,6 +9,7 @@ from stats.percentiles import (
     LOWER_IS_BETTER,
     PROPORTION_STATS,
     build_league_distributions,
+    build_pitcher_league_distributions,
     compute_percentile,
     get_percentile,
     get_all_percentiles,
@@ -81,6 +82,78 @@ class TestBuildLeagueDistributions:
         df.loc[[0, 1, 2], "wOBA"] = np.nan  # 3 NaN rows
         dists = build_league_distributions(df)
         assert len(dists["wOBA"]) == 17
+
+
+class TestBuildPitcherLeagueDistributions:
+    def _make_pitcher_season_df(self, n: int = 12) -> pd.DataFrame:
+        """Minimal FanGraphs-shaped pitcher DataFrame with proportion stats on 0-1 scale."""
+        return pd.DataFrame(
+            {
+                "wOBA": np.linspace(0.250, 0.380, n),
+                "xwOBA": np.linspace(0.260, 0.390, n),
+                "K%": np.linspace(0.180, 0.320, n),
+                "BB%": np.linspace(0.050, 0.110, n),
+                "K-BB%": np.linspace(0.120, 0.240, n),
+                "HardHit%": np.linspace(0.280, 0.520, n),
+                "Barrel%": np.linspace(0.040, 0.140, n),
+                "GB%": np.linspace(0.350, 0.520, n),
+                "CSW%": np.linspace(0.230, 0.340, n),
+                "F-Strike%": np.linspace(0.540, 0.670, n),
+            }
+        )
+
+    def test_returns_core_stats(self):
+        dists = build_pitcher_league_distributions(self._make_pitcher_season_df())
+        expected = {"wOBA", "xwOBA", "K%", "BB%", "K-BB%", "HardHit%", "Barrel%", "GB%"}
+        assert expected.issubset(dists.keys())
+
+    def test_fg_column_rename(self):
+        dists = build_pitcher_league_distributions(self._make_pitcher_season_df())
+        assert "FirstStrike%" in dists
+        assert "F-Strike%" not in dists
+
+    def test_absent_column_skipped(self):
+        df = self._make_pitcher_season_df().drop(columns=["CSW%"])
+        dists = build_pitcher_league_distributions(df)
+        assert "CSW%" not in dists
+
+    def test_proportion_stats_scaled(self):
+        dists = build_pitcher_league_distributions(self._make_pitcher_season_df())
+        for stat in ["K%", "BB%", "K-BB%", "HardHit%", "Barrel%", "GB%", "CSW%", "FirstStrike%"]:
+            assert dists[stat].max() > 1.0, f"{stat} not scaled up"
+            assert dists[stat].max() <= 100.0 + 1e-9
+
+    def test_woba_not_scaled(self):
+        dists = build_pitcher_league_distributions(self._make_pitcher_season_df())
+        assert dists["wOBA"].max() < 1.0
+        assert dists["xwOBA"].max() < 1.0
+
+    def test_early_season_guard(self):
+        dists = build_pitcher_league_distributions(self._make_pitcher_season_df(n=5))
+        assert dists == {}
+
+    def test_nan_rows_dropped(self):
+        df = self._make_pitcher_season_df()
+        df.loc[[0, 1], "wOBA"] = np.nan
+        df.loc[[2, 3], "K%"] = np.nan
+        df.loc[[4], "F-Strike%"] = np.nan
+        dists = build_pitcher_league_distributions(df)
+        for values in dists.values():
+            assert not np.isnan(values).any()
+
+    def test_pitcher_direction_end_to_end(self):
+        distributions = {
+            "wOBA": np.array([0.220, 0.260, 0.300, 0.340]),
+            "K%": np.array([15.0, 20.0, 25.0, 30.0]),
+        }
+        player_stats = {"wOBA": 0.240, "K%": 30.0}
+        result = get_all_percentiles(player_stats, distributions, player_type="Pitcher")
+        assert result["wOBA"] > 70.0
+        assert result["K%"] > 70.0
+
+    def test_batter_distributions_unchanged(self):
+        dists = build_league_distributions(_make_season_df(40))
+        assert set(dists.keys()) == set(CORE_STATS)
 
 
 # ---------------------------------------------------------------------------

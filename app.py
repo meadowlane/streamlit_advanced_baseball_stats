@@ -417,13 +417,6 @@ with st.sidebar:
     if st.session_state.get("link_seasons", True):
         st.session_state["season_b"] = season_a
 
-    split_type_label = st.radio(
-        "Split",
-        list(SPLIT_TYPE_MAP.keys()),
-        help="Sets the rows in the splits table. Use Filters to narrow which pitches are counted for all rows.",
-    )
-    split_type = SPLIT_TYPE_MAP[split_type_label]
-
     st.divider()
 
     # ── Player list load ──────────────────────────────────────────────────────
@@ -1084,6 +1077,17 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.caption("Split type = table rows. Filters = data pool for each row.")
+if st.session_state.get("split_type_label") not in SPLIT_TYPE_MAP:
+    st.session_state["split_type_label"] = next(iter(SPLIT_TYPE_MAP))
+st.radio(
+    "Split by",
+    list(SPLIT_TYPE_MAP.keys()),
+    key="split_type_label",
+    help="Sets the rows in the splits table. Use Filters to narrow which pitches are counted for all rows.",
+    horizontal=True,
+)
+split_type_label = st.session_state["split_type_label"]
+split_type = SPLIT_TYPE_MAP[split_type_label]
 st.subheader(f"Splits: {split_type_label}")
 
 if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
