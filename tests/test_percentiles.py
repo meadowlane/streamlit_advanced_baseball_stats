@@ -186,6 +186,35 @@ class TestGetAllPercentiles:
         for stat, pct in result.items():
             assert 0.0 <= pct <= 100.0, f"{stat}: {pct} out of range"
 
+    def test_pitcher_direction_woba_lower(self):
+        dists = {"wOBA": np.array([0.200, 0.300, 0.400])}
+        low = get_all_percentiles({"wOBA": 0.200}, dists, player_type="Pitcher")["wOBA"]
+        high = get_all_percentiles({"wOBA": 0.400}, dists, player_type="Pitcher")["wOBA"]
+        assert low > high
+
+    def test_pitcher_direction_k_higher(self):
+        dists = {"K%": np.array([10.0, 20.0, 30.0])}
+        high = get_all_percentiles({"K%": 30.0}, dists, player_type="Pitcher")["K%"]
+        low = get_all_percentiles({"K%": 10.0}, dists, player_type="Pitcher")["K%"]
+        assert high > low
+
+    def test_batter_directions_unchanged(self):
+        dists = {
+            "K%": np.array([10.0, 20.0, 30.0]),
+            "wOBA": np.array([0.200, 0.300, 0.400]),
+        }
+
+        batter_default = get_all_percentiles({"K%": 10.0, "wOBA": 0.400}, dists)
+        batter_explicit = get_all_percentiles({"K%": 10.0, "wOBA": 0.400}, dists, player_type="Batter")
+        assert batter_default == batter_explicit
+
+        k_low = get_all_percentiles({"K%": 10.0}, dists, player_type="Batter")["K%"]
+        k_high = get_all_percentiles({"K%": 30.0}, dists, player_type="Batter")["K%"]
+        woba_low = get_all_percentiles({"wOBA": 0.200}, dists, player_type="Batter")["wOBA"]
+        woba_high = get_all_percentiles({"wOBA": 0.400}, dists, player_type="Batter")["wOBA"]
+        assert k_low > k_high
+        assert woba_high > woba_low
+
 
 # ---------------------------------------------------------------------------
 # get_color_tier

@@ -21,6 +21,9 @@ import pandas as pd
 
 # Stats where a LOWER value is better (percentile is inverted)
 LOWER_IS_BETTER: frozenset[str] = frozenset(["K%"])
+PITCHER_LOWER_IS_BETTER: frozenset[str] = frozenset(
+    ["wOBA", "xwOBA", "BB%", "HardHit%", "Barrel%"]
+)
 
 # FanGraphs stores these as proportions (0–1); splits.py outputs them as
 # percentages (0–100). We convert distributions to the percentage scale so
@@ -101,14 +104,25 @@ def get_percentile(stat: str, value: float, distributions: dict[str, np.ndarray]
 def get_all_percentiles(
     player_stats: dict[str, float | None],
     distributions: dict[str, np.ndarray],
+    player_type: str = "Batter",
 ) -> dict[str, float]:
     """Return {stat: percentile} for every stat in *player_stats*.
 
     Stats missing from distributions or with None/NaN values get np.nan.
     """
+    lower_is_better = (
+        PITCHER_LOWER_IS_BETTER
+        if str(player_type).strip().lower() == "pitcher"
+        else LOWER_IS_BETTER
+    )
+
     return {
-        stat: get_percentile(stat, value, distributions)  # type: ignore[arg-type]
-        if value is not None
+        stat: compute_percentile(
+            value,
+            distributions[stat],
+            higher_is_better=(stat not in lower_is_better),
+        )
+        if (value is not None and stat in distributions)
         else np.nan
         for stat, value in player_stats.items()
     }
