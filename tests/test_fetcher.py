@@ -98,6 +98,26 @@ class TestFetchBattingStats:
         _fetch_batting_stats(2024)
         mock_batting.assert_called_once_with(2024, qual=50)
 
+    @patch("data.fetcher._last_completed_season_year", return_value=2025)
+    @patch("data.fetcher.pb.batting_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_future_season_skips_pybaseball_and_returns_empty(self, mock_cache, mock_batting, _mock_last):
+        df = _fetch_batting_stats(2026)
+        assert df.empty
+        assert "warning" in df.attrs
+        mock_batting.assert_not_called()
+        mock_cache.assert_not_called()
+
+    @patch("data.fetcher._last_completed_season_year", return_value=2025)
+    @patch("data.fetcher.pb.batting_stats", side_effect=ValueError("parse error"))
+    @patch("data.fetcher.pb.cache.enable")
+    def test_pybaseball_error_returns_empty_with_warning(self, mock_cache, mock_batting, _mock_last):
+        df = _fetch_batting_stats(2025)
+        assert df.empty
+        assert "warning" in df.attrs
+        mock_cache.assert_called_once()
+        mock_batting.assert_called_once_with(2025, qual=50)
+
 
 # ---------------------------------------------------------------------------
 # _fetch_statcast_batter

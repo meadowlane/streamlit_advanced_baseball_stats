@@ -47,6 +47,7 @@ STATCAST_START_YEAR = 2015
 CURRENT_YEAR = dt.date.today().year
 STATCAST_SEASONS = list(range(CURRENT_YEAR, STATCAST_START_YEAR - 1, -1))
 SEASONS = STATCAST_SEASONS
+DEFAULT_SEASON = max(STATCAST_START_YEAR, CURRENT_YEAR - 1)
 FEATURE_PITCHERS = False
 DEFAULT_PLAYER_TYPE = "Batter"
 
@@ -221,9 +222,9 @@ with st.sidebar:
         if "season_a" in st.session_state:
             st.warning(
                 f"Season A {st.session_state['season_a']} is outside supported Statcast seasons "
-                f"({STATCAST_START_YEAR}-{CURRENT_YEAR}); reset to {STATCAST_SEASONS[0]}."
+                f"({STATCAST_START_YEAR}-{CURRENT_YEAR}); reset to {DEFAULT_SEASON}."
             )
-        st.session_state["season_a"] = STATCAST_SEASONS[0]
+        st.session_state["season_a"] = DEFAULT_SEASON
     if st.session_state.get("season_b") not in STATCAST_SEASONS:
         if "season_b" in st.session_state:
             st.warning(
@@ -325,8 +326,8 @@ with st.sidebar:
         player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
 
     if st.session_state["season_a"] not in SEASONS:
-        st.session_state["season_a"] = SEASONS[0]
-    season_a = st.selectbox("Season A", options=SEASONS, key="season_a")
+        st.session_state["season_a"] = DEFAULT_SEASON
+    season_a = st.selectbox("Season", options=SEASONS, key="season_a")
     if st.session_state.get("link_seasons", True):
         st.session_state["season_b"] = season_a
 
@@ -400,6 +401,8 @@ with st.sidebar:
 
     with st.spinner("Loading player list…"):
         season_df = get_batting_stats(season_a)
+    if season_df.empty and season_df.attrs.get("warning"):
+        st.warning(str(season_df.attrs["warning"]))
 
     player_names = sorted(season_df["Name"].dropna().unique().tolist(), key=lambda n: n.split()[-1])
     season_df_b_fg = season_df  # default; overridden below for unlinked cross-year mode
@@ -444,6 +447,8 @@ with st.sidebar:
         if not link_seasons and season_b != season_a:
             with st.spinner("Loading Player B player list…"):
                 season_df_b_fg = get_batting_stats(season_b)
+            if season_df_b_fg.empty and season_df_b_fg.attrs.get("warning"):
+                st.warning(str(season_df_b_fg.attrs["warning"]))
             player_b_names = sorted(
                 season_df_b_fg["Name"].dropna().unique().tolist(),
                 key=lambda n: n.split()[-1],
@@ -602,6 +607,8 @@ with st.sidebar:
 
 if selected_name is None:
     st.header("⚾ MLB Splits")
+    if season_df.empty and season_df.attrs.get("warning"):
+        st.warning(str(season_df.attrs["warning"]))
     st.markdown(
         "Search for a batter in the sidebar to view advanced Statcast stats "
         "and splits by pitcher handedness, home/away, or month."
