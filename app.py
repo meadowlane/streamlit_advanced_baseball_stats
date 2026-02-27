@@ -428,7 +428,7 @@ with st.sidebar:
     )
 
     if _player_not_in_season and selected_name == _prev_player:
-        st.warning(f"No qualifying data for {selected_name} in {season_a}.")
+        st.warning(f"No MLB Statcast data for {selected_name} in {season_a}.")
 
     if selected_name is not None:
         if st.button("Clear player", use_container_width=True):
@@ -468,7 +468,7 @@ with st.sidebar:
         )
 
         if _player_b_not_in_season and selected_name_b == _prev_player_b:
-            st.warning(f"No qualifying data for {selected_name_b} in {season_b}.")
+            st.warning(f"No MLB Statcast data for {selected_name_b} in {season_b}.")
 
         if selected_name_b is not None:
             if st.button("Clear player B", use_container_width=True):
@@ -622,8 +622,7 @@ if comparison_mode and selected_name_b is None:
 player_row = get_player_row(season_df, selected_name)
 if player_row is None:
     st.warning(
-        f"{selected_name} has no qualifying data in the {season_a} season "
-        "(fewer than 50 plate appearances or season not yet available). "
+        f"No MLB Statcast data for {selected_name} in {season_a}. "
         "Select a different season or use **Clear player** in the sidebar."
     )
     st.stop()
@@ -644,8 +643,7 @@ if comparison_mode:
     player_row_b = get_player_row(season_df_b_fg, selected_name_b)
     if player_row_b is None:
         st.warning(
-            f"{selected_name_b} has no qualifying data in the {season_b} season "
-            "(fewer than 50 plate appearances or season not yet available). "
+            f"No MLB Statcast data for {selected_name_b} in {season_b}. "
             "Select a different season or use **Clear player B** in the sidebar."
         )
         st.stop()
