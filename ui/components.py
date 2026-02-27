@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from stats.percentiles import CORE_STATS, LOWER_IS_BETTER
+from stats.splits import STAT_REGISTRY
 
 # ---------------------------------------------------------------------------
 # Formatting helpers (pure — no Streamlit calls)
@@ -326,6 +327,19 @@ def _trend_value_format(stat_key: str) -> str:
     return "%.3f" if stat_key in {"wOBA", "xwOBA"} else "%.1f%%"
 
 
+def _trend_stat_label(stat_key: str) -> str:
+    spec = STAT_REGISTRY.get(stat_key)
+    return spec.label if spec is not None else stat_key
+
+
+def _filter_real_data_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    n_pitches = pd.to_numeric(df["n_pitches"], errors="coerce")
+    value = pd.to_numeric(df["value"], errors="coerce")
+    return df[(n_pitches > 0) & value.notna()].copy()
+
+
 def render_trend_section(
     trend_data_a: list[dict],
     selected_stats: list[str],
@@ -354,6 +368,7 @@ def render_trend_section(
 
     if selected_stat not in selected_stats:
         selected_stat = selected_stats[0]
+    stat_label = _trend_stat_label(selected_stat)
 
     year_start, year_end = year_range
     stat_df_a = tidy_df_a[
@@ -366,6 +381,8 @@ def render_trend_section(
         & (tidy_df_b["year"] >= int(year_start))
         & (tidy_df_b["year"] <= int(year_end))
     ].copy()
+    stat_df_a = _filter_real_data_rows(stat_df_a)
+    stat_df_b = _filter_real_data_rows(stat_df_b)
 
     if stat_df_a.empty and stat_df_b.empty:
         st.info("No trend data available for that stat/year range.")
@@ -385,16 +402,26 @@ def render_trend_section(
             hover_parts = [
                 f"{label}",
                 f"Year: {int(row['year'])}",
-                f"{selected_stat}: {format_stat_value(selected_stat, row['value'])}",
+                f"{stat_label}: {format_stat_value(selected_stat, row['value'])}",
                 f"N_pitches: {int(row['n_pitches']) if pd.notna(row['n_pitches']) else '—'}",
                 f"Approx PA: {int(row['approx_pa']) if pd.notna(row['approx_pa']) else '—'}",
             ]
             if pd.notna(row["n_bip"]):
                 hover_parts.append(f"N_BIP: {int(row['n_bip'])}")
-            hover_rows.append("<br>".join(hover_parts))
+            hover_rows.append("<br>".join(hover_parts) + "<extra></extra>")
         return hover_rows
 
     fig = go.Figure()
+    title_suffix = (
+        f"{int(year_start)}-{int(year_end)}"
+        if int(year_start) != int(year_end)
+        else f"{int(year_start)}"
+    )
+    if not stat_df_b.empty and player_label_b is not None:
+        title_text = f"{player_label_a} vs {player_label_b} — {stat_label} by year ({title_suffix})"
+    else:
+        title_text = f"{player_label_a} — {stat_label} by year ({title_suffix})"
+
     if not stat_df_a.empty:
         fig.add_trace(
             go.Scatter(
@@ -440,7 +467,7 @@ def render_trend_section(
         gridcolor="rgba(128,128,128,0.15)",
         tickfont=dict(size=10),
         zeroline=False,
-        title=selected_stat,
+        title=stat_label,
     )
     fig.update_layout(
         height=340,
@@ -448,7 +475,8 @@ def render_trend_section(
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         showlegend=(not stat_df_b.empty),
-        hovermode="x unified",
+        hovermode="closest",
+        title=title_text,
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
@@ -483,8 +511,8 @@ def render_trend_section(
 
         column_config: dict[str, st.column_config.Column] = {
             "year": st.column_config.NumberColumn("year", format="%d"),
-            "A_value": st.column_config.NumberColumn("A_value", format=_trend_value_format(selected_stat)),
-            "B_value": st.column_config.NumberColumn("B_value", format=_trend_value_format(selected_stat)),
+            "A_value": st.column_config.NumberColumn(f"{player_label_a} {stat_label}", format=_trend_value_format(selected_stat)),
+            "B_value": st.column_config.NumberColumn(f"{player_label_b} {stat_label}", format=_trend_value_format(selected_stat)),
             "diff(A-B)": st.column_config.NumberColumn("diff(A-B)", format=_trend_value_format(selected_stat)),
             "A_n_pitches": st.column_config.NumberColumn("A_n_pitches", format="%d"),
             "B_n_pitches": st.column_config.NumberColumn("B_n_pitches", format="%d"),
@@ -513,7 +541,7 @@ def render_trend_section(
             hide_index=True,
             column_config={
                 "year": st.column_config.NumberColumn("year", format="%d"),
-                "value": st.column_config.NumberColumn("value", format=_trend_value_format(selected_stat)),
+                "value": st.column_config.NumberColumn(stat_label, format=_trend_value_format(selected_stat)),
                 "n_pitches": st.column_config.NumberColumn("n_pitches", format="%d"),
                 "n_bip": st.column_config.NumberColumn("n_bip", format="%d"),
                 "approx_pa": st.column_config.NumberColumn("approx_pa", format="%d"),
