@@ -24,7 +24,22 @@ _GLOBAL_SEASON_MODIFIER_RES = [
     re.compile(r"\bseason\s+((?:19|20)\d{2})\b", re.IGNORECASE),
     re.compile(r"\b((?:19|20)\d{2})\b", re.IGNORECASE),
 ]
-_TRAILING_FRAGMENT_STOPWORDS = {"in", "season", "year", "the", "a", "an", "of"}
+_TRAILING_FRAGMENT_STOPWORDS = {"in", "season", "year", "the", "a", "an", "of", "trend", "to"}
+
+_TREND_KEYWORDS_RE = re.compile(r"\b(trend|career\s+arc)\b", re.IGNORECASE)
+_LAST_N_YEARS_RE = re.compile(
+    r"\b(?:over\s+(?:the\s+)?)?last\s+(\d+)\s+(?:years?|seasons?)\b",
+    re.IGNORECASE,
+)
+_YEAR_RANGE_RE = re.compile(
+    r"\b((?:19|20)\d{2})\s*(?:[-\u2013]|to)\s*((?:19|20)\d{2})\b",
+    re.IGNORECASE,
+)
+_TREND_MODIFIER_STRIP_RES = [
+    re.compile(r"\bcareer\s+arc\b", re.IGNORECASE),
+    re.compile(r"\btrend\b", re.IGNORECASE),
+    re.compile(r"\b(?:over\s+(?:the\s+)?)?last\s+\d+\s+(?:years?|seasons?)\b", re.IGNORECASE),
+]
 
 _MONTH_NAME_TO_INT = {
     "january": 1,

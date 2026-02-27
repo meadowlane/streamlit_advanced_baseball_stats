@@ -403,6 +403,10 @@ def get_trend_stats(
         prepared = get_prepared_df_cached(raw_df, prepare_cache, cache_key)
         filtered = apply_filters(prepared, filters)
         stats = _compute_stats(filtered)
+        sample_sizes = get_sample_sizes(filtered)
         stats["season"] = season
+        stats["n_pitches"] = sample_sizes.get("N_pitches")
+        stats["n_bip"] = sample_sizes.get("N_BIP")
+        stats["approx_pa"] = sample_sizes.get("approx_PA")
         results.append(stats)
     return results

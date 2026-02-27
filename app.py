@@ -14,15 +14,17 @@ from stats.percentiles import (
 from stats.nl_query import extract_last_year, parse_nl_query
 from stats.filters import (
     FILTER_REGISTRY,
+    SplitFilters,
     apply_filters,
     get_prepared_df_cached,
     rows_to_split_filters,
     summarize_filter_rows,
 )
-from stats.splits import STAT_REGISTRY, _compute_stats, get_sample_sizes, get_splits
+from stats.splits import STAT_REGISTRY, _compute_stats, get_sample_sizes, get_splits, get_trend_stats
 from ui.components import (
     percentile_bar_chart,
     player_header,
+    render_trend_section,
     split_table,
     stat_card,
     stat_cards_row,
@@ -40,6 +42,7 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 
 SEASONS = [2025, 2024, 2023, 2022]
+STATCAST_SEASONS = list(range(2025, 2014, -1))  # 2025–2015 descending; extend each year
 FEATURE_PITCHERS = False
 DEFAULT_PLAYER_TYPE = "Batter"
 
@@ -301,6 +304,32 @@ with st.sidebar:
     split_type = SPLIT_TYPE_MAP[split_type_label]
     comparison_mode = st.checkbox("Comparison mode", key="comparison_mode")
 
+    # Per-side season state — allows cross-year comparison (e.g. 2025 A vs 2024 B).
+    # When comparison_mode is off, season_a == season_b == top-level season.
+    if comparison_mode:
+        st.session_state.setdefault("link_seasons", True)
+        link_seasons = st.checkbox(
+            "Link seasons",
+            key="link_seasons",
+            help="Unlink to compare players across different seasons",
+        )
+        if not link_seasons:
+            if st.session_state.get("season_a_selectbox") not in STATCAST_SEASONS:
+                st.session_state["season_a_selectbox"] = season
+            if st.session_state.get("season_b_selectbox") not in STATCAST_SEASONS:
+                st.session_state["season_b_selectbox"] = season
+            _ss_col_a, _ss_col_b = st.columns(2)
+            with _ss_col_a:
+                st.selectbox("Player A season", STATCAST_SEASONS, key="season_a_selectbox")
+            with _ss_col_b:
+                st.selectbox("Player B season", STATCAST_SEASONS, key="season_b_selectbox")
+    else:
+        link_seasons = True
+
+    # Effective seasons used throughout the rest of the app.
+    season_a = season if (not comparison_mode or link_seasons) else st.session_state["season_a_selectbox"]
+    season_b = season if (not comparison_mode or link_seasons) else st.session_state["season_b_selectbox"]
+
     if "selected_stats_requested" not in st.session_state:
         st.session_state["selected_stats_requested"] = CORE_STATS.copy()
 
@@ -346,9 +375,10 @@ with st.sidebar:
     st.divider()
 
     with st.spinner("Loading player list…"):
-        season_df = get_batting_stats(season)
+        season_df = get_batting_stats(season_a)
 
     player_names = sorted(season_df["Name"].dropna().unique().tolist(), key=lambda n: n.split()[-1])
+    season_df_b_fg = season_df  # default; overridden below for unlinked cross-year mode
 
     # Preserve the selected player across season changes.
     # If they didn't qualify this season (< 50 PA), inject their name so the
@@ -374,7 +404,7 @@ with st.sidebar:
     )
 
     if _player_not_in_season and selected_name == _prev_player:
-        st.warning(f"No qualifying data for {selected_name} in {season}.")
+        st.warning(f"No qualifying data for {selected_name} in {season_a}.")
 
     if selected_name is not None:
         if st.button("Clear player", use_container_width=True):
@@ -386,7 +416,17 @@ with st.sidebar:
         if st.session_state.pop("_clear_player_b_pending", False):
             st.session_state["player_b_selectbox"] = None
 
-        player_b_names = [n for n in player_names if n != selected_name]
+        # Load Player B's FG data for the correct season (may differ from A when unlinked).
+        if not link_seasons and season_b != season_a:
+            with st.spinner("Loading Player B player list…"):
+                season_df_b_fg = get_batting_stats(season_b)
+            player_b_names = sorted(
+                season_df_b_fg["Name"].dropna().unique().tolist(),
+                key=lambda n: n.split()[-1],
+            )
+            player_b_names = [n for n in player_b_names if n != selected_name]
+        else:
+            player_b_names = [n for n in player_names if n != selected_name]
 
         _prev_player_b = st.session_state.get("player_b_selectbox")
         _player_b_not_in_season = (
@@ -404,7 +444,7 @@ with st.sidebar:
         )
 
         if _player_b_not_in_season and selected_name_b == _prev_player_b:
-            st.warning(f"No qualifying data for {selected_name_b} in {season}.")
+            st.warning(f"No qualifying data for {selected_name_b} in {season_b}.")
 
         if selected_name_b is not None:
             if st.button("Clear player B", use_container_width=True):
@@ -558,7 +598,7 @@ if comparison_mode and selected_name_b is None:
 player_row = get_player_row(season_df, selected_name)
 if player_row is None:
     st.warning(
-        f"{selected_name} has no qualifying data in the {season} season "
+        f"{selected_name} has no qualifying data in the {season_a} season "
         "(fewer than 50 plate appearances or season not yet available). "
         "Select a different season or use **Clear player** in the sidebar."
     )
@@ -577,10 +617,10 @@ if mlbam_id is None:
 team_b = None
 mlbam_id_b = None
 if comparison_mode:
-    player_row_b = get_player_row(season_df, selected_name_b)
+    player_row_b = get_player_row(season_df_b_fg, selected_name_b)
     if player_row_b is None:
         st.warning(
-            f"{selected_name_b} has no qualifying data in the {season} season "
+            f"{selected_name_b} has no qualifying data in the {season_b} season "
             "(fewer than 50 plate appearances or season not yet available). "
             "Select a different season or use **Clear player B** in the sidebar."
         )
@@ -602,11 +642,11 @@ if comparison_mode:
 # (must precede stat cards so Season Stats reflect active filters)
 # ---------------------------------------------------------------------------
 
-with st.spinner(f"Loading {season} Statcast data for {selected_name}…"):
-    raw_statcast_df = get_statcast_batter(mlbam_id, season)
+with st.spinner(f"Loading {season_a} Statcast data for {selected_name}…"):
+    raw_statcast_df = get_statcast_batter(mlbam_id, season_a)
 
 prepared_cache = st.session_state.setdefault(_PREPARED_DF_CACHE_KEY, {})
-prepare_cache_key = (int(mlbam_id), int(season), str(player_type))
+prepare_cache_key = (int(mlbam_id), int(season_a), str(player_type))
 statcast_df = get_prepared_df_cached(
     raw_statcast_df,
     prepared_cache,
@@ -621,9 +661,9 @@ statcast_df_b = None
 filtered_df_b = None
 sample_sizes_b = None
 if comparison_mode and mlbam_id_b is not None:
-    with st.spinner(f"Loading {season} Statcast data for {selected_name_b}…"):
-        raw_statcast_df_b = get_statcast_batter(mlbam_id_b, season)
-    prepare_cache_key_b = (int(mlbam_id_b), int(season), str(player_type))
+    with st.spinner(f"Loading {season_b} Statcast data for {selected_name_b}…"):
+        raw_statcast_df_b = get_statcast_batter(mlbam_id_b, season_b)
+    prepare_cache_key_b = (int(mlbam_id_b), int(season_b), str(player_type))
     statcast_df_b = get_prepared_df_cached(
         raw_statcast_df_b,
         prepared_cache,
@@ -681,7 +721,13 @@ color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_stats(filtered_df_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
-    percentiles_b = get_all_percentiles(player_stats_b, distributions)
+    # When seasons differ, percentile Player B against their own year's league population.
+    distributions_b = (
+        build_league_distributions(season_df_b_fg)
+        if season_b != season_a
+        else distributions
+    )
+    percentiles_b = get_all_percentiles(player_stats_b, distributions_b)
     color_tiers_b = get_all_color_tiers(percentiles_b)
 
 
@@ -690,10 +736,14 @@ if comparison_mode and filtered_df_b is not None:
 # ---------------------------------------------------------------------------
 
 if comparison_mode and team_b is not None:
-    st.subheader(f"{selected_name} vs {selected_name_b}")
-    st.caption(f"{team} vs {team_b} · {season} · {player_type}")
+    if season_a != season_b:
+        st.subheader(f"{selected_name} ({season_a}) vs {selected_name_b} ({season_b})")
+        st.caption(f"{team} vs {team_b} · {player_type}")
+    else:
+        st.subheader(f"{selected_name} vs {selected_name_b}")
+        st.caption(f"{team} vs {team_b} · {season_a} · {player_type}")
 else:
-    player_header(selected_name, team, season, player_type)
+    player_header(selected_name, team, season_a, player_type)
 
 if player_type == "Pitcher":
     st.warning("Pitcher splits are coming in a future update. Showing batter stats.")
@@ -722,7 +772,10 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
         st.caption(_sample_size_text(sample_sizes_b))
         _render_player_stat_grid(player_stats_b, percentiles_b, color_tiers_b, selected_stats)
     with col_delta:
-        st.markdown(f"**Difference ({selected_name} minus {selected_name_b})**")
+        if season_a != season_b:
+            st.markdown(f"**Difference ({selected_name} {season_a} minus {selected_name_b} {season_b})**")
+        else:
+            st.markdown(f"**Difference ({selected_name} minus {selected_name_b})**")
         st.caption(
             f"Positive means {selected_name} is higher; negative means {selected_name_b} is higher."
         )
@@ -763,7 +816,7 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
         st.caption(f"Player A: {selected_name}")
         if statcast_df.empty:
             st.warning(
-                f"No Statcast data found for {selected_name} in {season}. "
+                f"No Statcast data found for {selected_name} in {season_a}. "
                 "They may not have had enough plate appearances or the season data "
                 "may not yet be available."
             )
@@ -779,7 +832,7 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
         st.caption(f"Player B: {selected_name_b}")
         if statcast_df_b.empty:
             st.warning(
-                f"No Statcast data found for {selected_name_b} in {season}. "
+                f"No Statcast data found for {selected_name_b} in {season_b}. "
                 "They may not have had enough plate appearances or the season data "
                 "may not yet be available."
             )
@@ -793,7 +846,7 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
 else:
     if statcast_df.empty:
         st.warning(
-            f"No Statcast data found for {selected_name} in {season}. "
+            f"No Statcast data found for {selected_name} in {season_a}. "
             "They may not have had enough plate appearances or the season data "
             "may not yet be available."
         )
@@ -804,6 +857,82 @@ else:
         else:
             split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
             split_table(splits_df[split_cols])
+
+st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Trend by Year
+# ---------------------------------------------------------------------------
+
+with st.expander("Player Trend by Year", expanded=False):
+    trend_seasons = sorted(s for s in STATCAST_SEASONS if s <= season_a)
+    available_trend_stats = selected_stats if selected_stats else list(STAT_REGISTRY.keys())
+    trend_stat_default = "xwOBA" if "xwOBA" in available_trend_stats else available_trend_stats[0]
+    selected_trend_stat = st.selectbox(
+        "Stat to plot",
+        options=available_trend_stats,
+        index=available_trend_stats.index(trend_stat_default),
+        key="trend_stat_key",
+    )
+
+    trend_year_min = trend_seasons[0]
+    trend_year_max = trend_seasons[-1]
+    trend_default_start = max(trend_year_min, trend_year_max - 6)
+    if "trend_year_range" not in st.session_state:
+        st.session_state["trend_year_range"] = (trend_default_start, trend_year_max)
+    trend_year_cols = st.columns([5, 1])
+    with trend_year_cols[1]:
+        all_years_clicked = st.button("All years", key="trend_all_years_btn")
+    if all_years_clicked:
+        st.session_state["trend_year_range"] = (trend_year_min, trend_year_max)
+    with trend_year_cols[0]:
+        trend_year_range = st.slider(
+            "Year range",
+            min_value=trend_year_min,
+            max_value=trend_year_max,
+            step=1,
+            key="trend_year_range",
+        )
+
+    apply_trend_filters = st.checkbox(
+        "Apply current filters to each year",
+        value=True,
+        key="trend_apply_filters",
+    )
+
+    trend_filters = filters if apply_trend_filters else SplitFilters()
+    with st.spinner("Loading trend data… (first load may take ~30s)"):
+        trend_data_a = get_trend_stats(
+            mlbam_id,
+            trend_seasons,
+            player_type,
+            trend_filters,
+            get_statcast_batter,
+            prepared_cache,
+        )
+        trend_data_b_trend = None
+        if comparison_mode and mlbam_id_b is not None:
+            trend_data_b_trend = get_trend_stats(
+                mlbam_id_b,
+                trend_seasons,
+                player_type,
+                trend_filters,
+                get_statcast_batter,
+                prepared_cache,
+            )
+
+    render_trend_section(
+        trend_data_a=trend_data_a,
+        selected_stats=available_trend_stats,
+        selected_stat=selected_trend_stat,
+        year_range=trend_year_range,
+        player_label_a=selected_name,
+        trend_data_b=trend_data_b_trend,
+        player_label_b=selected_name_b if comparison_mode else None,
+        apply_filters_to_each_year=apply_trend_filters,
+        active_filter_summary=active_filter_summary,
+    )
 
 st.divider()
 

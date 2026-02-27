@@ -270,6 +270,241 @@ def split_table(df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Trend line chart
+# ---------------------------------------------------------------------------
+
+_COLOR_TREND_A = "#4FC3F7"
+_COLOR_TREND_B = "#FF8A65"
+
+def _build_trend_tidy_df(trend_data: list[dict], stats_order: list[str]) -> pd.DataFrame:
+    rows: list[dict] = []
+    for season_row in trend_data:
+        year = season_row.get("season")
+        if year is None:
+            continue
+
+        n_pitches = season_row.get("n_pitches", season_row.get("N_pitches"))
+        n_bip = season_row.get("n_bip", season_row.get("N_BIP"))
+        approx_pa = season_row.get("approx_pa", season_row.get("approx_PA", season_row.get("PA")))
+
+        for stat_key in stats_order:
+            rows.append(
+                {
+                    "year": int(year),
+                    "stat_key": stat_key,
+                    "value": season_row.get(stat_key),
+                    "n_pitches": n_pitches,
+                    "n_bip": n_bip,
+                    "approx_pa": approx_pa,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def _trend_value_format(stat_key: str) -> str:
+    return "%.3f" if stat_key in {"wOBA", "xwOBA"} else "%.1f%%"
+
+
+def render_trend_section(
+    trend_data_a: list[dict],
+    selected_stats: list[str],
+    selected_stat: str,
+    year_range: tuple[int, int],
+    player_label_a: str,
+    trend_data_b: list[dict] | None = None,
+    player_label_b: str | None = None,
+    apply_filters_to_each_year: bool = True,
+    active_filter_summary: str | None = None,
+) -> None:
+    """Render single-stat yearly trend chart + compact table."""
+    if not selected_stats:
+        st.info("No stats selected for trend chart.")
+        return
+
+    tidy_df_a = _build_trend_tidy_df(trend_data_a, selected_stats)
+    tidy_df_b = (
+        _build_trend_tidy_df(trend_data_b, selected_stats)
+        if trend_data_b is not None and player_label_b is not None
+        else pd.DataFrame()
+    )
+    if tidy_df_a.empty and tidy_df_b.empty:
+        st.info("No trend data available.")
+        return
+
+    if selected_stat not in selected_stats:
+        selected_stat = selected_stats[0]
+
+    year_start, year_end = year_range
+    stat_df_a = tidy_df_a[
+        (tidy_df_a["stat_key"] == selected_stat)
+        & (tidy_df_a["year"] >= int(year_start))
+        & (tidy_df_a["year"] <= int(year_end))
+    ].copy()
+    stat_df_b = tidy_df_b[
+        (tidy_df_b["stat_key"] == selected_stat)
+        & (tidy_df_b["year"] >= int(year_start))
+        & (tidy_df_b["year"] <= int(year_end))
+    ].copy()
+
+    if stat_df_a.empty and stat_df_b.empty:
+        st.info("No trend data available for that stat/year range.")
+        return
+
+    stat_df_a = stat_df_a.sort_values("year")
+    stat_df_b = stat_df_b.sort_values("year")
+
+    if apply_filters_to_each_year and active_filter_summary and "No filters" not in active_filter_summary:
+        st.caption(f"Filters applied to trend: {active_filter_summary}")
+    elif not apply_filters_to_each_year:
+        st.caption("Filters applied to trend: Off (full-season data each year).")
+
+    def _hover_text(df: pd.DataFrame, label: str) -> list[str]:
+        hover_rows: list[str] = []
+        for _, row in df.iterrows():
+            hover_parts = [
+                f"{label}",
+                f"Year: {int(row['year'])}",
+                f"{selected_stat}: {format_stat_value(selected_stat, row['value'])}",
+                f"N_pitches: {int(row['n_pitches']) if pd.notna(row['n_pitches']) else '—'}",
+                f"Approx PA: {int(row['approx_pa']) if pd.notna(row['approx_pa']) else '—'}",
+            ]
+            if pd.notna(row["n_bip"]):
+                hover_parts.append(f"N_BIP: {int(row['n_bip'])}")
+            hover_rows.append("<br>".join(hover_parts))
+        return hover_rows
+
+    fig = go.Figure()
+    if not stat_df_a.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=stat_df_a["year"],
+                y=stat_df_a["value"],
+                mode="lines+markers",
+                name=player_label_a,
+                line=dict(color=_COLOR_TREND_A, width=2),
+                marker=dict(color=_COLOR_TREND_A, size=8),
+                hovertext=_hover_text(stat_df_a, player_label_a),
+                hoverinfo="text",
+            )
+        )
+    if not stat_df_b.empty and player_label_b is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=stat_df_b["year"],
+                y=stat_df_b["value"],
+                mode="lines+markers",
+                name=player_label_b,
+                line=dict(color=_COLOR_TREND_B, width=2),
+                marker=dict(color=_COLOR_TREND_B, size=8),
+                hovertext=_hover_text(stat_df_b, player_label_b),
+                hoverinfo="text",
+            )
+        )
+
+    years = sorted(
+        set(stat_df_a["year"].tolist())
+        | set(stat_df_b["year"].tolist())
+    )
+    tick_text = ["2020*" if int(y) == 2020 else str(int(y)) for y in years]
+    fig.update_xaxes(
+        tickvals=years,
+        ticktext=tick_text,
+        tickfont=dict(size=11),
+        showgrid=True,
+        gridcolor="rgba(128,128,128,0.15)",
+        title="Year",
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(128,128,128,0.15)",
+        tickfont=dict(size=10),
+        zeroline=False,
+        title=selected_stat,
+    )
+    fig.update_layout(
+        height=340,
+        margin=dict(l=10, r=10, t=20, b=40),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        showlegend=(not stat_df_b.empty),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    if not stat_df_b.empty and player_label_b is not None:
+        a_table = stat_df_a[["year", "value", "n_pitches", "approx_pa"]].rename(
+            columns={
+                "value": "A_value",
+                "n_pitches": "A_n_pitches",
+                "approx_pa": "A_approx_pa",
+            }
+        )
+        b_table = stat_df_b[["year", "value", "n_pitches", "approx_pa"]].rename(
+            columns={
+                "value": "B_value",
+                "n_pitches": "B_n_pitches",
+                "approx_pa": "B_approx_pa",
+            }
+        )
+        table_df = pd.merge(a_table, b_table, on="year", how="outer").sort_values("year")
+        table_df["diff(A-B)"] = table_df["A_value"] - table_df["B_value"]
+        table_df = table_df[
+            ["year", "A_value", "B_value", "diff(A-B)", "A_n_pitches", "B_n_pitches", "A_approx_pa", "B_approx_pa"]
+        ]
+        table_df["year"] = table_df["year"].astype("Int64")
+        table_df["A_n_pitches"] = pd.to_numeric(table_df["A_n_pitches"], errors="coerce").astype("Int64")
+        table_df["B_n_pitches"] = pd.to_numeric(table_df["B_n_pitches"], errors="coerce").astype("Int64")
+        table_df["A_approx_pa"] = pd.to_numeric(table_df["A_approx_pa"], errors="coerce").astype("Int64")
+        table_df["B_approx_pa"] = pd.to_numeric(table_df["B_approx_pa"], errors="coerce").astype("Int64")
+
+        if table_df["A_approx_pa"].isna().all() and table_df["B_approx_pa"].isna().all():
+            table_df = table_df.drop(columns=["A_approx_pa", "B_approx_pa"])
+
+        column_config: dict[str, st.column_config.Column] = {
+            "year": st.column_config.NumberColumn("year", format="%d"),
+            "A_value": st.column_config.NumberColumn("A_value", format=_trend_value_format(selected_stat)),
+            "B_value": st.column_config.NumberColumn("B_value", format=_trend_value_format(selected_stat)),
+            "diff(A-B)": st.column_config.NumberColumn("diff(A-B)", format=_trend_value_format(selected_stat)),
+            "A_n_pitches": st.column_config.NumberColumn("A_n_pitches", format="%d"),
+            "B_n_pitches": st.column_config.NumberColumn("B_n_pitches", format="%d"),
+        }
+        if "A_approx_pa" in table_df.columns:
+            column_config["A_approx_pa"] = st.column_config.NumberColumn("A_approx_pa", format="%d")
+        if "B_approx_pa" in table_df.columns:
+            column_config["B_approx_pa"] = st.column_config.NumberColumn("B_approx_pa", format="%d")
+
+        st.dataframe(
+            table_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config=column_config,
+        )
+    else:
+        table_df = stat_df_a[["year", "value", "n_pitches", "n_bip", "approx_pa"]].copy()
+        table_df["year"] = table_df["year"].astype("Int64")
+        table_df["n_pitches"] = pd.to_numeric(table_df["n_pitches"], errors="coerce").astype("Int64")
+        table_df["n_bip"] = pd.to_numeric(table_df["n_bip"], errors="coerce").astype("Int64")
+        table_df["approx_pa"] = pd.to_numeric(table_df["approx_pa"], errors="coerce").astype("Int64")
+
+        st.dataframe(
+            table_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "year": st.column_config.NumberColumn("year", format="%d"),
+                "value": st.column_config.NumberColumn("value", format=_trend_value_format(selected_stat)),
+                "n_pitches": st.column_config.NumberColumn("n_pitches", format="%d"),
+                "n_bip": st.column_config.NumberColumn("n_bip", format="%d"),
+                "approx_pa": st.column_config.NumberColumn("approx_pa", format="%d"),
+            },
+        )
+
+    if 2020 in set(years):
+        st.caption("* 2020 was a 60-game season.")
+
+
+# ---------------------------------------------------------------------------
 # Player header
 # ---------------------------------------------------------------------------
 
