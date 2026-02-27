@@ -275,17 +275,37 @@ def split_table(df: pd.DataFrame) -> None:
 
 _COLOR_TREND_A = "#4FC3F7"
 _COLOR_TREND_B = "#FF8A65"
+_TREND_TIDY_COLUMNS = ["year", "stat_key", "value", "n_pitches", "approx_pa", "n_bip"]
 
 def _build_trend_tidy_df(trend_data: list[dict], stats_order: list[str]) -> pd.DataFrame:
     rows: list[dict] = []
     for season_row in trend_data:
-        year = season_row.get("season")
+        year = season_row.get("season", season_row.get("year"))
         if year is None:
             continue
 
         n_pitches = season_row.get("n_pitches", season_row.get("N_pitches"))
         n_bip = season_row.get("n_bip", season_row.get("N_BIP"))
         approx_pa = season_row.get("approx_pa", season_row.get("approx_PA", season_row.get("PA")))
+
+        # Accept already-tidy rows from optimized paths.
+        if "stat_key" in season_row and "value" in season_row:
+            stat_key = season_row.get("stat_key")
+            if stat_key is None:
+                continue
+            if stats_order and stat_key not in stats_order:
+                continue
+            rows.append(
+                {
+                    "year": int(year),
+                    "stat_key": stat_key,
+                    "value": season_row.get("value"),
+                    "n_pitches": n_pitches,
+                    "n_bip": n_bip,
+                    "approx_pa": approx_pa,
+                }
+            )
+            continue
 
         for stat_key in stats_order:
             rows.append(
@@ -299,7 +319,7 @@ def _build_trend_tidy_df(trend_data: list[dict], stats_order: list[str]) -> pd.D
                 }
             )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=_TREND_TIDY_COLUMNS)
 
 
 def _trend_value_format(stat_key: str) -> str:
@@ -326,7 +346,7 @@ def render_trend_section(
     tidy_df_b = (
         _build_trend_tidy_df(trend_data_b, selected_stats)
         if trend_data_b is not None and player_label_b is not None
-        else pd.DataFrame()
+        else _build_trend_tidy_df([], selected_stats)
     )
     if tidy_df_a.empty and tidy_df_b.empty:
         st.info("No trend data available.")

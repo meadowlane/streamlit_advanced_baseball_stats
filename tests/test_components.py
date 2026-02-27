@@ -13,6 +13,7 @@ from ui.components import (
     format_stat_value,
     format_percentile,
     build_chart_df,
+    _build_trend_tidy_df,
     _ORDERED_STATS,
 )
 
@@ -154,3 +155,25 @@ class TestBuildChartDf:
         df = build_chart_df(_PERCENTILES, _COLOR_TIERS, values)
         barrel_row = df[df["stat"] == "Barrel%"].iloc[0]
         assert "—" in barrel_row["label"]
+
+
+# ---------------------------------------------------------------------------
+# _build_trend_tidy_df
+# ---------------------------------------------------------------------------
+
+def test_build_trend_tidy_df_includes_stat_key_schema():
+    trend_data = [
+        {
+            "season": 2024,
+            "xwOBA": 0.365,
+            "n_pitches": 412,
+            "approx_pa": 104,
+            "n_bip": 71,
+        }
+    ]
+
+    df = _build_trend_tidy_df(trend_data, ["xwOBA"])
+
+    required = {"year", "stat_key", "value", "n_pitches", "approx_pa", "n_bip"}
+    assert required.issubset(df.columns)
+    assert df.iloc[0]["stat_key"] == "xwOBA"

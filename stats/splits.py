@@ -519,6 +519,11 @@ def get_trend_stats(
         if progress_cb is not None:
             progress_cb(idx, total_seasons, int(season), elapsed)
 
+        if stat_key_cache != "__all__":
+            stats["year"] = int(season)
+            stats["stat_key"] = stat_key_cache
+            stats["value"] = stats.get(stat_key_cache)
+
         results.append(stats)
 
     if use_debug_timing:

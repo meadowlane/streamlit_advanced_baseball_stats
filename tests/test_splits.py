@@ -459,6 +459,19 @@ class TestGetTrendStats:
         )
         assert result[0]["PA"] == 15
 
+    def test_single_stat_mode_includes_tidy_keys(self):
+        stub = self._stub(_make_df(30))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2024],
+            player_type="Batter", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+            stat_key="xwOBA",
+        )
+        row = result[0]
+        assert row["year"] == 2024
+        assert row["stat_key"] == "xwOBA"
+        assert row["value"] == row["xwOBA"]
+
     def test_prepare_cache_populated_after_call(self):
         stub = self._stub(_make_df(30))
         cache: dict = {}
