@@ -16,6 +16,9 @@ from ui.components import (
     _build_trend_tidy_df,
     _filter_real_data_rows,
     _ORDERED_STATS,
+    _SPLIT_TABLE_FORMAT,
+    _SPLIT_TABLE_HELP,
+    _ARSENAL_TABLE_HELP,
 )
 
 
@@ -191,3 +194,35 @@ def test_filter_real_data_rows_keeps_only_non_null_with_pitches():
     )
     filtered = _filter_real_data_rows(df)
     assert filtered["year"].tolist() == [2020, 2022]
+
+
+def test_split_table_column_help_is_wired():
+    required = {
+        "PA",
+        "wOBA",
+        "wOBA Allowed",
+        "xwOBA",
+        "xwOBA Allowed",
+        "K%",
+        "BB%",
+        "K-BB%",
+        "CSW%",
+        "Whiff%",
+        "FirstStrike%",
+        "HardHit%",
+        "Barrel%",
+        "GB%",
+    }
+    assert required.issubset(_SPLIT_TABLE_HELP.keys())
+    assert required.issubset(_SPLIT_TABLE_FORMAT.keys())
+    for col in required:
+        help_text = _SPLIT_TABLE_FORMAT[col].get("help")
+        assert isinstance(help_text, str) and len(help_text) > 0
+
+
+def test_arsenal_table_help_keys_present():
+    required = {"Pitch", "N", "Usage%", "Velo", "Spin", "CSW%", "Whiff%"}
+    assert set(_ARSENAL_TABLE_HELP.keys()) == required
+    for col in required:
+        assert isinstance(_ARSENAL_TABLE_HELP[col], str)
+        assert len(_ARSENAL_TABLE_HELP[col]) > 0

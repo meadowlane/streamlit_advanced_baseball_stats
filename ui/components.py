@@ -35,21 +35,48 @@ _STAT_FORMAT: dict[str, tuple[str, str]] = {
 }
 
 # Human-readable labels for split table column headers
+_SPLIT_TABLE_HELP: dict[str, str] = {
+    "PA": "Sample size for the split. Plate appearances for hitters; batters faced for pitchers.",
+    "wOBA": "Weighted On-Base Average for the split. Higher is better for hitters; lower is better for pitchers.",
+    "wOBA Allowed": "Weighted On-Base Average allowed by pitchers in this split. Lower is better for pitchers.",
+    "xwOBA": "Expected wOBA based on contact quality plus K/BB inputs. Higher is better for hitters; lower is better for pitchers.",
+    "xwOBA Allowed": "Expected wOBA allowed by pitchers in this split. Lower is better for pitchers.",
+    "K%": "Strikeout rate in this split. Higher is better for pitchers; lower is better for hitters.",
+    "BB%": "Walk rate in this split. Higher is better for hitters; lower is better for pitchers.",
+    "K-BB%": "Strikeout rate minus walk rate. Higher is better for pitchers.",
+    "CSW%": "Called Strikes + Whiffs rate per pitch. Higher is generally better for pitchers.",
+    "Whiff%": "Swing-and-miss rate per swing. Higher is generally better for pitchers.",
+    "FirstStrike%": "First-pitch strike rate at 0-0 counts. Higher is generally better for pitchers.",
+    "HardHit%": "Share of batted balls at 95+ mph. Higher is better for hitters; lower is better for pitchers.",
+    "Barrel%": "Share of batted balls classified as barrels. Higher is better for hitters; lower is better for pitchers.",
+    "GB%": "Ground-ball rate on balls in play. Often better higher for pitchers; context-dependent for hitters.",
+}
+
 _SPLIT_TABLE_FORMAT: dict[str, st.column_config.Column] = {
-    "PA":        st.column_config.NumberColumn("PA",       format="%d"),
-    "wOBA":      st.column_config.NumberColumn("wOBA",     format="%.3f"),
-    "wOBA Allowed": st.column_config.NumberColumn("wOBA Allowed", format="%.3f"),
-    "xwOBA":     st.column_config.NumberColumn("xwOBA",    format="%.3f"),
-    "xwOBA Allowed": st.column_config.NumberColumn("xwOBA Allowed", format="%.3f"),
-    "K%":        st.column_config.NumberColumn("K%",       format="%.1f%%"),
-    "BB%":       st.column_config.NumberColumn("BB%",      format="%.1f%%"),
-    "HardHit%":  st.column_config.NumberColumn("HardHit%", format="%.1f%%"),
-    "Barrel%":   st.column_config.NumberColumn("Barrel%",  format="%.1f%%"),
-    "GB%":       st.column_config.NumberColumn("GB%",      format="%.1f%%"),
-    "K-BB%":     st.column_config.NumberColumn("K-BB%",    format="%.1f%%"),
-    "CSW%":      st.column_config.NumberColumn("CSW%",     format="%.1f%%"),
-    "Whiff%":    st.column_config.NumberColumn("Whiff%",   format="%.1f%%"),
-    "FirstStrike%": st.column_config.NumberColumn("FirstStrike%", format="%.1f%%"),
+    "PA":        st.column_config.NumberColumn("PA",       format="%d", help=_SPLIT_TABLE_HELP.get("PA", None)),
+    "wOBA":      st.column_config.NumberColumn("wOBA",     format="%.3f", help=_SPLIT_TABLE_HELP.get("wOBA", None)),
+    "wOBA Allowed": st.column_config.NumberColumn("wOBA Allowed", format="%.3f", help=_SPLIT_TABLE_HELP.get("wOBA Allowed", None)),
+    "xwOBA":     st.column_config.NumberColumn("xwOBA",    format="%.3f", help=_SPLIT_TABLE_HELP.get("xwOBA", None)),
+    "xwOBA Allowed": st.column_config.NumberColumn("xwOBA Allowed", format="%.3f", help=_SPLIT_TABLE_HELP.get("xwOBA Allowed", None)),
+    "K%":        st.column_config.NumberColumn("K%",       format="%.1f%%", help=_SPLIT_TABLE_HELP.get("K%", None)),
+    "BB%":       st.column_config.NumberColumn("BB%",      format="%.1f%%", help=_SPLIT_TABLE_HELP.get("BB%", None)),
+    "HardHit%":  st.column_config.NumberColumn("HardHit%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("HardHit%", None)),
+    "Barrel%":   st.column_config.NumberColumn("Barrel%",  format="%.1f%%", help=_SPLIT_TABLE_HELP.get("Barrel%", None)),
+    "GB%":       st.column_config.NumberColumn("GB%",      format="%.1f%%", help=_SPLIT_TABLE_HELP.get("GB%", None)),
+    "K-BB%":     st.column_config.NumberColumn("K-BB%",    format="%.1f%%", help=_SPLIT_TABLE_HELP.get("K-BB%", None)),
+    "CSW%":      st.column_config.NumberColumn("CSW%",     format="%.1f%%", help=_SPLIT_TABLE_HELP.get("CSW%", None)),
+    "Whiff%":    st.column_config.NumberColumn("Whiff%",   format="%.1f%%", help=_SPLIT_TABLE_HELP.get("Whiff%", None)),
+    "FirstStrike%": st.column_config.NumberColumn("FirstStrike%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("FirstStrike%", None)),
+}
+
+_ARSENAL_TABLE_HELP: dict[str, str] = {
+    "Pitch": "Pitch type classification from Statcast for this arsenal row.",
+    "N": "Number of pitches of this type in the selected sample.",
+    "Usage%": "Share of all pitches thrown that were this pitch type.",
+    "Velo": "Average velocity for this pitch type in miles per hour (mph).",
+    "Spin": "Average spin rate for this pitch type in revolutions per minute (RPM).",
+    "CSW%": "Called Strikes + Whiffs rate for this pitch type per pitch.",
+    "Whiff%": "Swing-and-miss rate for this pitch type per swing.",
 }
 
 # Ordered display sequence for the 6 core stats
@@ -320,13 +347,13 @@ def render_pitch_arsenal(arsenal_df: pd.DataFrame) -> None:
             width="stretch",
             hide_index=True,
             column_config={
-                "Pitch": st.column_config.TextColumn("Pitch"),
-                "N": st.column_config.NumberColumn("N", format="%d"),
-                "Usage%": st.column_config.NumberColumn("Usage%", format="%.1f%%"),
-                "Velo": st.column_config.NumberColumn("Velo", format="%.1f"),
-                "Spin": st.column_config.NumberColumn("Spin", format="%d"),
-                "CSW%": st.column_config.NumberColumn("CSW%", format="%.1f%%"),
-                "Whiff%": st.column_config.NumberColumn("Whiff%", format="%.1f%%"),
+                "Pitch": st.column_config.TextColumn("Pitch", help=_ARSENAL_TABLE_HELP.get("Pitch", None)),
+                "N": st.column_config.NumberColumn("N", format="%d", help=_ARSENAL_TABLE_HELP.get("N", None)),
+                "Usage%": st.column_config.NumberColumn("Usage%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("Usage%", None)),
+                "Velo": st.column_config.NumberColumn("Velo", format="%.1f", help=_ARSENAL_TABLE_HELP.get("Velo", None)),
+                "Spin": st.column_config.NumberColumn("Spin", format="%d", help=_ARSENAL_TABLE_HELP.get("Spin", None)),
+                "CSW%": st.column_config.NumberColumn("CSW%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("CSW%", None)),
+                "Whiff%": st.column_config.NumberColumn("Whiff%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("Whiff%", None)),
             },
         )
 

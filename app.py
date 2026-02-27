@@ -741,6 +741,9 @@ with st.sidebar:
 
     filters = rows_to_split_filters(st.session_state["filter_rows"])
 
+    with st.expander("Stat Reference", expanded=False):
+        render_glossary(mode="compact", player_type=player_type)
+
     st.divider()
     st.caption("Data via pybaseball / Baseball Savant")
 
@@ -1265,10 +1268,3 @@ with st.expander("Player Trend by Year", expanded=False):
         )
 
 st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Glossary
-# ---------------------------------------------------------------------------
-
-render_glossary()

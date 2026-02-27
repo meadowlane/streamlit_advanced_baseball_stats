@@ -6,15 +6,16 @@ of a Streamlit runtime. The render_glossary() function wires it into the UI.
 
 from __future__ import annotations
 
-import streamlit as st
+from typing import Literal
 
-from stats.percentiles import COLOR_TIERS
+import pandas as pd
+import streamlit as st
 
 # ---------------------------------------------------------------------------
 # Stat definitions
 # ---------------------------------------------------------------------------
 
-STAT_DEFINITIONS: dict[str, dict[str, str]] = {
+STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
     "wOBA": {
         "full_name": "Weighted On-Base Average",
         "definition": (
@@ -25,6 +26,8 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Excellent: .400+ · Above avg: .360+ · Average: .320 · Below avg: .300−",
         "direction": "Higher is better",
+        "direction_pitcher": "Lower is better",
+        "denominator": "Plate appearances (batters) / batters faced outcomes (pitchers).",
     },
     "xwOBA": {
         "full_name": "Expected Weighted On-Base Average",
@@ -37,6 +40,8 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Same scale as wOBA. Sourced from Baseball Savant (Statcast).",
         "direction": "Higher is better",
+        "direction_pitcher": "Lower is better",
+        "denominator": "Plate appearances (batters) / batters faced outcomes (pitchers).",
     },
     "K%": {
         "full_name": "Strikeout Rate",
@@ -48,6 +53,8 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Excellent: <12% · Above avg: <18% · Average: ~23% · Below avg: >28%",
         "direction": "Lower is better",
+        "direction_pitcher": "Higher is better",
+        "denominator": "Plate appearances (batters) / batters faced (pitchers).",
     },
     "BB%": {
         "full_name": "Walk Rate",
@@ -58,6 +65,8 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Excellent: >14% · Above avg: >10% · Average: ~8.5% · Below avg: <6%",
         "direction": "Higher is better",
+        "direction_pitcher": "Lower is better",
+        "denominator": "Plate appearances (batters) / batters faced (pitchers).",
     },
     "K-BB%": {
         "full_name": "Strikeout Minus Walk Rate",
@@ -68,15 +77,20 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Higher is better for pitchers; strong starters are often in low-to-mid teens or better.",
         "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Batters faced (derived from K% and BB% over the same sample).",
     },
     "GB%": {
         "full_name": "Ground-Ball Rate",
         "definition": (
-            "For pitchers, the share of batted balls allowed that are ground balls. "
-            "Denominator: all tracked balls in play for the selected sample."
+            "The share of tracked balls in play that are ground balls. For pitchers, "
+            "more ground balls generally suppress damage; for batters, this is often "
+            "more neutral/context-dependent because too many grounders can cap power."
         ),
-        "context": "Typical MLB pitcher range is roughly 40–48%; 50%+ is strong.",
-        "direction": "Higher is better (for pitchers)",
+        "context": "Typical MLB pitcher range is roughly 40–48%; 50%+ is strong for pitchers.",
+        "direction": "Context-dependent",
+        "direction_pitcher": "Higher is better",
+        "denominator": "Tracked balls in play (batted-ball events).",
     },
     "CSW%": {
         "full_name": "Called Strikes Plus Whiffs",
@@ -85,7 +99,9 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
             "Denominator: total pitches in the selected sample."
         ),
         "context": "Around 28–30% is solid; low-30s is often excellent.",
-        "direction": "Higher is better (for pitchers)",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Total pitches.",
     },
     "Whiff%": {
         "full_name": "Whiff Rate",
@@ -94,7 +110,9 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
             "Denominator: swings (not all pitches)."
         ),
         "context": "About 25–30% is good; 35%+ is typically elite.",
-        "direction": "Higher is better (for pitchers)",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Swings.",
     },
     "FirstStrike%": {
         "full_name": "First-Pitch Strike Rate",
@@ -103,7 +121,9 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
             "Denominator: pitches thrown in 0 balls, 0 strikes counts."
         ),
         "context": "League average is often near 60%; mid-60s is strong.",
-        "direction": "Higher is better (for pitchers)",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "0-0 first pitches.",
     },
     "HardHit%": {
         "full_name": "Hard Hit Rate",
@@ -115,6 +135,8 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Excellent: >50% · Above avg: >43% · Average: ~38% · Below avg: <32%",
         "direction": "Higher is better",
+        "direction_pitcher": "Lower is better",
+        "denominator": "Batted-ball events.",
     },
     "Barrel%": {
         "full_name": "Barrel Rate",
@@ -126,6 +148,51 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         ),
         "context": "Excellent: >15% · Above avg: >10% · Average: ~7.5% · Below avg: <5%",
         "direction": "Higher is better",
+        "direction_pitcher": "Lower is better",
+        "denominator": "Batted-ball events.",
+    },
+    "Velo": {
+        "full_name": "Velocity",
+        "definition": (
+            "Pitch speed in miles per hour. In arsenal views this is typically average "
+            "velocity for each pitch type over the selected sample."
+        ),
+        "context": "Higher velocity can increase margin for error, but effectiveness depends on shape/command.",
+        "direction": "Context-dependent",
+        "direction_pitcher": None,
+        "denominator": "Individual pitches (averaged over the selected sample).",
+    },
+    "Spin": {
+        "full_name": "Spin Rate",
+        "definition": (
+            "Rate of pitch rotation (RPM). Spin influences movement profile and pitch shape; "
+            "its value depends on pitch type and movement efficiency."
+        ),
+        "context": "Not universally higher-is-better; pitch-type context matters.",
+        "direction": "Context-dependent",
+        "direction_pitcher": None,
+        "denominator": "Individual pitches (averaged over the selected sample).",
+    },
+    "Usage%": {
+        "full_name": "Pitch Usage Rate",
+        "definition": (
+            "How often a pitch type is thrown relative to all pitches in the selected sample."
+        ),
+        "context": "Descriptive mix stat, not a direct quality metric by itself.",
+        "direction": "Context-dependent",
+        "direction_pitcher": None,
+        "denominator": "Total pitches.",
+    },
+    "PA": {
+        "full_name": "Plate Appearances / Batters Faced",
+        "definition": (
+            "Counting stat for opportunities in the sample. For batters this is plate "
+            "appearances; for pitchers this reflects batters faced."
+        ),
+        "context": "Higher values mean larger samples, not automatically better performance.",
+        "direction": "Context-dependent",
+        "direction_pitcher": None,
+        "denominator": "Not a rate stat (raw count).",
     },
 }
 
@@ -136,16 +203,18 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
 PERCENTILE_EXPLAINER = """
 **What does a percentile mean here?**
 
-Each percentile badge shows how a player's stat compares to all MLB batters
-who logged at least 50 plate appearances in the selected season.
+Each percentile badge shows how a player's stat compares to MLB players in the
+same role (batters vs pitchers) from the selected season leaderboard.
 
 - **90th percentile** → better than 90% of qualifiers
 - **50th percentile** → exactly league average
 - **10th percentile** → below 90% of qualifiers
 
-**For K% (Strikeout Rate)**, the scale is *inverted* — a low K% is good,
-so a player with a 10% K% in a league where the average is 23% will rank
-in the **90th percentile**, not the 10th.
+Direction depends on role:
+
+- **Batters:** K% is inverted (lower is better).
+- **Pitchers:** wOBA, xwOBA, BB%, HardHit%, and Barrel% are inverted (lower is better),
+  while **K% is higher-is-better**.
 
 **Percentile benchmarks are based on season-level league distributions.**
 When viewing splits (vs LHP/RHP, Home/Away, Monthly), percentiles show
@@ -158,32 +227,132 @@ where that split value falls relative to the *overall* season distribution
 # ---------------------------------------------------------------------------
 
 
-def render_glossary() -> None:
+def _direction_icon(direction: str) -> str:
+    if direction.startswith("Higher"):
+        return "↑"
+    if direction.startswith("Lower"):
+        return "↓"
+    return "↔"
+
+
+def _compact_denominator_text(denominator: str) -> str:
+    text = denominator.strip()
+    if "Plate appearances (batters)" in text and "batters faced" in text:
+        return "Denom: PA (hitters) / BF (pitchers)"
+    if "Batters faced" in text:
+        return "Denom: BF"
+    if "Tracked balls in play" in text:
+        return "Denom: balls in play"
+    if "Batted-ball events" in text:
+        return "Denom: batted-ball events"
+    if "Total pitches" in text:
+        return "Denom: total pitches"
+    if "Swings" in text:
+        return "Denom: swings"
+    if "0-0 first pitches" in text:
+        return "Denom: 0-0 first pitches"
+    if "Not a rate stat" in text:
+        return "Denom: count stat"
+    if "Individual pitches" in text:
+        return "Denom: pitches (avg by pitch type)"
+    return f"Denom: {text}"
+
+
+def _compact_direction_text(
+    batter_direction: str,
+    pitcher_direction: str | None,
+    player_type: str | None = None,
+) -> str:
+    role = (player_type or "").strip().lower()
+    batter_icon = _direction_icon(batter_direction)
+    if pitcher_direction and pitcher_direction != batter_direction:
+        pitcher_icon = _direction_icon(pitcher_direction)
+        return f"{batter_icon} hitter / {pitcher_icon} pitcher"
+    if role == "pitcher" and pitcher_direction:
+        return f"{_direction_icon(pitcher_direction)} pitcher"
+    if role == "batter":
+        return f"{batter_icon} hitter"
+    return f"{batter_icon} both roles"
+
+
+def _compact_context_text(context: str) -> str:
+    text = context.strip()
+    if "Average:" in text:
+        avg_value = text.split("Average:", 1)[1].split("·", 1)[0].strip()
+        return f"Avg {avg_value}"
+    if "League average" in text:
+        return text.split(".", 1)[0].strip()
+    return text.split("·", 1)[0].strip()
+
+
+def _compact_meaning_text(definition: str, max_len: int = 96) -> str:
+    text = " ".join(definition.strip().split())
+    if not text:
+        return ""
+    sentence = text.split(". ", 1)[0].strip()
+    if not sentence.endswith("."):
+        sentence += "."
+    if len(sentence) <= max_len:
+        return sentence
+    return sentence[: max_len - 1].rstrip() + "…"
+
+
+def _compact_better_text(
+    batter_direction: str,
+    pitcher_direction: str | None,
+) -> str:
+    batter_icon = _direction_icon(batter_direction)
+    if batter_direction == "Context-dependent":
+        return "info"
+    if pitcher_direction and pitcher_direction != batter_direction:
+        pitcher_icon = _direction_icon(pitcher_direction)
+        return f"{batter_icon} hitter / {pitcher_icon} pitcher"
+    if pitcher_direction and "pitcher" in pitcher_direction.lower():
+        return f"{_direction_icon(pitcher_direction)} pitcher"
+    return f"{batter_icon} both"
+
+
+def render_glossary(mode: Literal["full", "compact"] = "full", player_type: str | None = None) -> None:
     """Render the full glossary and percentile explainer inside a Streamlit expander."""
+    if mode == "compact":
+        st.caption("Color scale: 90-100 Elite | 70-89 Above avg | 50-69 Avg | 30-49 Below avg | 0-29 Well below")
+        rows = []
+        for stat, info in STAT_DEFINITIONS.items():
+            batter_direction = str(info["direction"])
+            pitcher_direction = str(info["direction_pitcher"]) if info["direction_pitcher"] else None
+            meaning = _compact_meaning_text(str(info["definition"]))
+            context = _compact_context_text(str(info["context"]))
+            if context:
+                meaning = f"{meaning} {context}."
+            rows.append(
+                {
+                    "Stat": stat,
+                    "Meaning": meaning,
+                    "Denom": _compact_denominator_text(str(info["denominator"])),
+                    "Better": _compact_better_text(batter_direction, pitcher_direction),
+                }
+            )
+
+        compact_df = pd.DataFrame(rows, columns=["Stat", "Meaning", "Denom", "Better"])
+        st.dataframe(
+            compact_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Stat": st.column_config.TextColumn("Stat", width="small"),
+                "Meaning": st.column_config.TextColumn("Meaning", width="large"),
+                "Denom": st.column_config.TextColumn("Denom", width="small"),
+                "Better": st.column_config.TextColumn("Better", width="small"),
+            },
+        )
+        return
+
     with st.expander("Glossary & How to Read Percentiles", expanded=False):
         # ---- Color scale key ----
         st.markdown("#### Percentile Color Scale")
-        tier_labels = [
-            (name.capitalize(), hex_color, label)
-            for (_, name, hex_color), label in zip(
-                COLOR_TIERS,
-                [
-                    "90th–100th percentile — Elite",
-                    "70th–89th percentile — Above average",
-                    "50th–69th percentile — Average",
-                    "30th–49th percentile — Below average",
-                    "0th–29th percentile — Well below average",
-                ],
-            )
-        ]
-
-        badge_html = " &nbsp; ".join(
-            f'<span style="background:{hex_};color:#fff;padding:3px 12px;'
-            f'border-radius:99px;font-size:12px;font-weight:700;">'
-            f'{name}: {label}</span>'
-            for name, hex_, label in tier_labels
+        st.markdown(
+            "90–100 Elite | 70–89 Above avg | 50–69 Avg | 30–49 Below avg | 0–29 Well below"
         )
-        st.markdown(badge_html, unsafe_allow_html=True)
         st.markdown("")
 
         # ---- Percentile explainer ----
@@ -193,13 +362,17 @@ def render_glossary() -> None:
         # ---- Stat definitions ----
         st.markdown("#### Stat Definitions")
         for stat, info in STAT_DEFINITIONS.items():
-            direction_icon = "↑" if info["direction"] == "Higher is better" else "↓"
+            direction_value = str(info.get("direction", "Context-dependent"))
+            direction_icon = _direction_icon(direction_value)
             st.markdown(
                 f"**{stat} — {info['full_name']}** &nbsp;"
                 f'<span style="font-size:11px;color:#888;">'
-                f"{direction_icon} {info['direction']}</span>",
+                f"{direction_icon} {direction_value}</span>",
                 unsafe_allow_html=True,
             )
             st.markdown(info["definition"])
             st.caption(f"Context: {info['context']}")
+            st.caption(f"Denominator: {info['denominator']}")
+            if info.get("direction_pitcher"):
+                st.caption(f"Pitcher direction: {info['direction_pitcher']}")
             st.markdown("")
