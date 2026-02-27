@@ -59,6 +59,16 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         "context": "Excellent: >14% · Above avg: >10% · Average: ~8.5% · Below avg: <6%",
         "direction": "Higher is better",
     },
+    "K-BB%": {
+        "full_name": "Strikeout Minus Walk Rate",
+        "definition": (
+            "A quick pitcher command/dominance indicator computed as strikeout rate "
+            "minus walk rate (K% - BB%). It captures how often a pitcher gets outs "
+            "via strikeout while avoiding free passes."
+        ),
+        "context": "Higher is better for pitchers; strong starters are often in low-to-mid teens or better.",
+        "direction": "Higher is better",
+    },
     "HardHit%": {
         "full_name": "Hard Hit Rate",
         "definition": (

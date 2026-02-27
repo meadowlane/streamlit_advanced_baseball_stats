@@ -73,6 +73,12 @@ FILTER_REGISTRY: dict[str, FilterSpec] = {
         required_cols=["p_throws"],
         default_params={"hand": "R"},
     ),
+    "batter_hand": FilterSpec(
+        key="batter_hand",
+        label="Batter handedness",
+        required_cols=["stand"],
+        default_params={"hand": "R"},
+    ),
     "home_away": FilterSpec(
         key="home_away",
         label="Home / Away",
@@ -119,6 +125,9 @@ class SplitFilters:
     pitcher_hand : "L" | "R" | None
         Keep only pitches thrown by a left- or right-handed pitcher.
         Maps to the Statcast ``p_throws`` column.
+    batter_hand : "L" | "R" | None
+        Keep only pitches to left- or right-handed batters.
+        Maps to the Statcast ``stand`` column.
     home_away : "home" | "away" | None
         Keep only pitches from home plate appearances (batter's team is home)
         or away plate appearances.  Maps to ``inning_topbot``: ``"Bot"`` = home
@@ -135,6 +144,7 @@ class SplitFilters:
     inning_min:   int | None = None
     inning_max:   int | None = None
     pitcher_hand: Literal["L", "R"] | None = None
+    batter_hand:  Literal["L", "R"] | None = None
     home_away:    Literal["home", "away"] | None = None
     month:        int | None = None
     balls:        int | None = None
@@ -182,6 +192,8 @@ def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
             kwargs["inning_max"] = p.get("max")
         elif ft == "pitcher_hand":
             kwargs["pitcher_hand"] = p.get("hand")
+        elif ft == "batter_hand":
+            kwargs["batter_hand"] = p.get("hand")
         elif ft == "home_away":
             kwargs["home_away"] = p.get("side")
         elif ft == "month":
@@ -257,6 +269,9 @@ def summarize_filter_rows(rows: list[dict]) -> str:
         elif ft == "pitcher_hand":
             hand = p.get("hand", spec.default_params.get("hand", "R"))
             parts.append(f"{label}: {hand}")
+        elif ft == "batter_hand":
+            hand = p.get("hand", spec.default_params.get("hand", "R"))
+            parts.append(f"{label}: {hand}")
         elif ft == "home_away":
             side = str(p.get("side", spec.default_params.get("side", "home"))).capitalize()
             parts.append(f"{label}: {side}")
@@ -319,7 +334,11 @@ def _col_ok(df: pd.DataFrame, col: str, filter_name: str) -> bool:
 # Filter application
 # ---------------------------------------------------------------------------
 
-def apply_filters(df: pd.DataFrame, filters: SplitFilters, player_type: str = "Batter") -> pd.DataFrame:
+def apply_filters(
+    df: pd.DataFrame,
+    filters: SplitFilters,
+    pitcher_perspective: bool = False,
+) -> pd.DataFrame:
     """Return a copy of *df* narrowed to the rows matching all active filters.
 
     A filter field is "active" when it is not None.  All active filters are
@@ -336,10 +355,9 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters, player_type: str = "B
         Raw Statcast pitch-level DataFrame as returned by get_statcast_batter.
     filters : SplitFilters
         Filter configuration.  None fields are skipped.
-    player_type : str
-        Either ``"Batter"`` or ``"Pitcher"``. In pitcher mode, handedness uses
-        ``stand`` (batter hand) and home/away mapping is inverted so
-        ``home`` corresponds to ``inning_topbot == "Top"``.
+    pitcher_perspective : bool
+        When ``True``, interpret ``home_away`` from the pitcher's perspective:
+        ``home`` → ``inning_topbot == "Top"`` and ``away`` → ``"Bot"``.
 
     Raises
     ------
@@ -353,6 +371,7 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters, player_type: str = "B
         filters.inning_min   is not None,
         filters.inning_max   is not None,
         filters.pitcher_hand is not None,
+        filters.batter_hand  is not None,
         filters.home_away    is not None,
         filters.month        is not None,
         filters.balls        is not None,
@@ -370,16 +389,18 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters, player_type: str = "B
 
     # --- pitcher handedness ----------------------------------------------
     if filters.pitcher_hand is not None:
-        is_pitcher = str(player_type).strip().lower() == "pitcher"
-        hand_col = "stand" if is_pitcher else "p_throws"
-        if _col_ok(df, hand_col, "pitcher_hand"):
-            df = df[df[hand_col] == filters.pitcher_hand]
+        if _col_ok(df, "p_throws", "pitcher_hand"):
+            df = df[df["p_throws"] == filters.pitcher_hand]
+
+    # --- batter handedness -----------------------------------------------
+    if filters.batter_hand is not None:
+        if _col_ok(df, "stand", "batter_hand"):
+            df = df[df["stand"] == filters.batter_hand]
 
     # --- home / away -----------------------------------------------------
     if filters.home_away is not None:
         if _col_ok(df, "inning_topbot", "home_away"):
-            is_pitcher = str(player_type).strip().lower() == "pitcher"
-            if is_pitcher:
+            if pitcher_perspective:
                 topbot = "Top" if filters.home_away == "home" else "Bot"
             else:
                 topbot = "Bot" if filters.home_away == "home" else "Top"

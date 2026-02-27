@@ -24,7 +24,15 @@ from stats.filters import (
     rows_to_split_filters,
     summarize_filter_rows,
 )
-from stats.splits import STAT_REGISTRY, _compute_stats, get_sample_sizes, get_splits, get_trend_stats
+from stats.splits import (
+    STAT_REGISTRY,
+    _compute_all_pitcher_stats,
+    _compute_stats,
+    get_pitcher_splits,
+    get_sample_sizes,
+    get_splits,
+    get_trend_stats,
+)
 from ui.components import (
     percentile_bar_chart,
     player_header,
@@ -60,6 +68,7 @@ SPLIT_TYPE_MAP = {
 }
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+PITCHER_EXTRA_STATS = ["K-BB%"]
 _DEFAULT_STATS = CORE_STATS.copy()  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 
@@ -79,7 +88,7 @@ _INT_TO_MONTH = {v: k for k, v in _MONTH_TO_INT.items()}
 
 _BALLS_OPTS   = ["any", "0", "1", "2", "3"]
 _STRIKES_OPTS = ["any", "0", "1", "2"]
-_DELTA_DECIMALS = {"wOBA": 3, "xwOBA": 3, "K%": 1, "BB%": 1, "HardHit%": 1, "Barrel%": 1}
+_DELTA_DECIMALS = {"wOBA": 3, "xwOBA": 3, "K%": 1, "BB%": 1, "HardHit%": 1, "Barrel%": 1, "K-BB%": 1}
 _GRID_COLS_PER_ROW = 3
 _DELTA_TILE_CSS = """
 <style>
@@ -478,14 +487,15 @@ with st.sidebar:
         season_b = season_a
 
     # ── Stats to show ─────────────────────────────────────────────────────────
+    stats_catalog = CORE_STATS + PITCHER_EXTRA_STATS if player_type == "Pitcher" else CORE_STATS
     if "selected_stats_requested" not in st.session_state:
-        st.session_state["selected_stats_requested"] = CORE_STATS.copy()
+        st.session_state["selected_stats_requested"] = stats_catalog.copy()
 
     _selected_count = sum(
-        1 for stat in CORE_STATS if st.session_state.get(f"stat_show_{stat}", True)
+        1 for stat in stats_catalog if st.session_state.get(f"stat_show_{stat}", True)
     )
-    with st.expander(f"Stats to show ({_selected_count}/{len(CORE_STATS)})", expanded=False):
-        for stat in CORE_STATS:
+    with st.expander(f"Stats to show ({_selected_count}/{len(stats_catalog)})", expanded=False):
+        for stat in stats_catalog:
             k = f"stat_show_{stat}"
             if k not in st.session_state:
                 st.session_state[k] = stat in st.session_state["selected_stats_requested"]
@@ -494,28 +504,29 @@ with st.sidebar:
         with btn_col1:
             if st.button("Reset", key="stats_reset_defaults", width="stretch",
                          help="Restore default stats"):
-                for stat in CORE_STATS:
-                    st.session_state[f"stat_show_{stat}"] = stat in _DEFAULT_STATS
+                default_stats = _DEFAULT_STATS + PITCHER_EXTRA_STATS if player_type == "Pitcher" else _DEFAULT_STATS
+                for stat in stats_catalog:
+                    st.session_state[f"stat_show_{stat}"] = stat in default_stats
                 st.rerun()
         with btn_col2:
             if st.button("All", key="stats_select_all", width="stretch",
                          help="Enable all stats"):
-                for stat in CORE_STATS:
+                for stat in stats_catalog:
                     st.session_state[f"stat_show_{stat}"] = True
                 st.rerun()
         with btn_col3:
             if st.button("None", key="stats_select_none", width="stretch"):
-                for stat in CORE_STATS:
+                for stat in stats_catalog:
                     st.session_state[f"stat_show_{stat}"] = False
                 st.rerun()
 
         cols = st.columns(2)
-        for i, stat in enumerate(CORE_STATS):
+        for i, stat in enumerate(stats_catalog):
             with cols[i % 2]:
                 st.checkbox(stat, key=f"stat_show_{stat}")
 
     selected_stats_requested = [
-        stat for stat in CORE_STATS
+        stat for stat in stats_catalog
         if st.session_state.get(f"stat_show_{stat}", False)
     ]
     st.session_state["selected_stats_requested"] = selected_stats_requested
@@ -730,7 +741,7 @@ statcast_df = get_prepared_df_cached(
     log_fn=print,
 )
 
-filtered_df = apply_filters(statcast_df, filters, player_type=player_type)
+filtered_df = apply_filters(statcast_df, filters, pitcher_perspective=(player_type == "Pitcher"))
 sample_sizes = get_sample_sizes(filtered_df)
 
 statcast_df_b = None
@@ -746,7 +757,7 @@ if comparison_mode and mlbam_id_b is not None:
         prepare_cache_key_b,
         log_fn=print,
     )
-    filtered_df_b = apply_filters(statcast_df_b, filters, player_type=player_type)
+    filtered_df_b = apply_filters(statcast_df_b, filters, pitcher_perspective=(player_type == "Pitcher"))
     sample_sizes_b = get_sample_sizes(filtered_df_b)
 
 missing_stat_requirements: dict[str, list[str]] = {}
@@ -756,6 +767,10 @@ if comparison_mode and statcast_df_b is not None:
     validation_frames.append((selected_name_b, statcast_df_b))
 
 for stat in selected_stats_requested:
+    if stat == "K-BB%" and player_type == "Pitcher":
+        selected_stats.append(stat)
+        continue
+
     spec = STAT_REGISTRY.get(stat)
     if spec is None:
         continue
@@ -784,7 +799,7 @@ if missing_stat_requirements:
 # the percentile chart shows where this filtered performance ranks overall.
 # ---------------------------------------------------------------------------
 
-_raw         = _compute_stats(filtered_df)
+_raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
 distributions = build_league_distributions(season_df)
@@ -795,7 +810,7 @@ player_stats_b = None
 percentiles_b = None
 color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
-    _raw_b = _compute_stats(filtered_df_b)
+    _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
@@ -898,7 +913,11 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
                 "may not yet be available."
             )
         else:
-            splits_df = get_splits(filtered_df, split_type, player_type=player_type)
+            splits_df = (
+                get_pitcher_splits(filtered_df, split_type)
+                if player_type == "Pitcher"
+                else get_splits(filtered_df, split_type)
+            )
             if splits_df.empty or splits_df["PA"].sum() == 0:
                 st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
             else:
@@ -914,7 +933,11 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
                 "may not yet be available."
             )
         else:
-            splits_df_b = get_splits(filtered_df_b, split_type, player_type=player_type)
+            splits_df_b = (
+                get_pitcher_splits(filtered_df_b, split_type)
+                if player_type == "Pitcher"
+                else get_splits(filtered_df_b, split_type)
+            )
             if splits_df_b.empty or splits_df_b["PA"].sum() == 0:
                 st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
             else:
@@ -928,7 +951,11 @@ else:
             "may not yet be available."
         )
     else:
-        splits_df = get_splits(filtered_df, split_type, player_type=player_type)
+        splits_df = (
+            get_pitcher_splits(filtered_df, split_type)
+            if player_type == "Pitcher"
+            else get_splits(filtered_df, split_type)
+        )
         if splits_df.empty or splits_df["PA"].sum() == 0:
             st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
         else:
