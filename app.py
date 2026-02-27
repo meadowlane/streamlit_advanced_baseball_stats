@@ -12,6 +12,7 @@ from data.fetcher import (
 )
 from stats.percentiles import (
     build_league_distributions,
+    build_pitcher_league_distributions,
     get_all_color_tiers,
     get_all_percentiles,
 )
@@ -895,8 +896,12 @@ if missing_stat_requirements:
 _raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
-distributions = {} if player_type == "Pitcher" else build_league_distributions(season_df)
-percentiles   = get_all_percentiles(player_stats, distributions)
+distributions = (
+    build_pitcher_league_distributions(season_df)
+    if player_type == "Pitcher"
+    else build_league_distributions(season_df)
+)
+percentiles   = get_all_percentiles(player_stats, distributions, player_type=player_type)
 color_tiers   = get_all_color_tiers(percentiles)
 
 player_stats_b = None
@@ -907,7 +912,7 @@ if comparison_mode and filtered_df_b is not None:
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
-        {}
+        build_pitcher_league_distributions(season_df_b_fg)
         if player_type == "Pitcher"
         else (
             build_league_distributions(season_df_b_fg)
@@ -915,7 +920,7 @@ if comparison_mode and filtered_df_b is not None:
             else distributions
         )
     )
-    percentiles_b = get_all_percentiles(player_stats_b, distributions_b)
+    percentiles_b = get_all_percentiles(player_stats_b, distributions_b, player_type=player_type)
     color_tiers_b = get_all_color_tiers(percentiles_b)
 
 
@@ -1062,17 +1067,16 @@ if player_type == "Pitcher":
 # Percentile bar chart
 # ---------------------------------------------------------------------------
 
-if player_type != "Pitcher":
-    st.subheader("Percentile Rankings vs. League")
-    if comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
-        st.caption(f"Player A: {selected_name}")
-        percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
-        st.caption(f"Player B: {selected_name_b}")
-        percentile_bar_chart(percentiles_b, color_tiers_b, player_stats_b, stats_order=selected_stats)
-    else:
-        percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
+st.subheader("Percentile Rankings vs. League")
+if comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
+    st.caption(f"Player A: {selected_name}")
+    percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
+    st.caption(f"Player B: {selected_name_b}")
+    percentile_bar_chart(percentiles_b, color_tiers_b, player_stats_b, stats_order=selected_stats)
+else:
+    percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
 
-    st.divider()
+st.divider()
 
 
 # ---------------------------------------------------------------------------
