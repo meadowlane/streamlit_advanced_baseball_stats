@@ -220,6 +220,7 @@ def percentile_bar_chart(
         )
 
     fig.update_layout(
+        template="plotly_dark",
         xaxis=dict(
             range=[0, 115],  # extra room for outside text labels
             title="Percentile rank",
@@ -470,6 +471,7 @@ def render_trend_section(
         title=stat_label,
     )
     fig.update_layout(
+        template="plotly_dark",
         height=340,
         margin=dict(l=10, r=10, t=20, b=40),
         plot_bgcolor="rgba(0,0,0,0)",

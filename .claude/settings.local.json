@@ -39,7 +39,17 @@
       "Bash(python3 -c \":*)",
       "Bash(pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py tests/test_nl_query.py -v --tb=short)",
       "Bash(python3.11 -c \"import ast; ast.parse\\(open\\(''ui/components.py''\\).read\\(\\)\\); print\\(''ui/components.py OK''\\)\")",
-      "Bash(python3.11 -c \"import ast; ast.parse\\(open\\(''app.py''\\).read\\(\\)\\); print\\(''app.py OK''\\)\")"
+      "Bash(python3.11 -c \"import ast; ast.parse\\(open\\(''app.py''\\).read\\(\\)\\); print\\(''app.py OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python3 -m pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py tests/test_nl_query.py -v)",
+      "Bash(python3 -m pip show pytest)",
+      "Bash(python3 -c \"import pytest; print\\(pytest.__version__\\)\")",
+      "Bash(~/.local/bin/pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py tests/test_nl_query.py -v)",
+      "Bash(python3 -m pip install pytest -q)",
+      "Bash(python3 -m pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py tests/test_nl_query.py -v --tb=short)",
+      "Bash(python3.11 -m pytest --version)",
+      "Bash(python3.11 -c \"import pandas; print\\(''pandas ok''\\)\")",
+      "Bash(python3.11 -m pytest tests/test_filters.py tests/test_splits.py tests/test_percentiles.py tests/test_placeholder.py tests/test_nl_query.py -v --tb=short)"
     ]
   }
 }
