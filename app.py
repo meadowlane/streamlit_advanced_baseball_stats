@@ -64,6 +64,7 @@ _INT_TO_MONTH = {v: k for k, v in _MONTH_TO_INT.items()}
 
 _BALLS_OPTS   = ["any", "0", "1", "2", "3"]
 _STRIKES_OPTS = ["any", "0", "1", "2"]
+_DELTA_DECIMALS = {"wOBA": 3, "xwOBA": 3, "K%": 1, "BB%": 1, "HardHit%": 1, "Barrel%": 1}
 
 
 def _make_type_change_cb(row_id: str):
@@ -80,6 +81,22 @@ def _make_type_change_cb(row_id: str):
     return _cb
 
 
+def _sample_size_text(sample_sizes: dict[str, int | None]) -> str:
+    parts = [f"N_pitches: {sample_sizes['N_pitches']:,}"]
+    if sample_sizes["N_BIP"] is not None:
+        parts.append(f"N_BIP: {sample_sizes['N_BIP']:,}")
+    if sample_sizes["approx_PA"] is not None:
+        parts.append(f"Approx PA: {sample_sizes['approx_PA']:,}")
+    return " | ".join(parts)
+
+
+def _delta_text(stat: str, a_val: float | None, b_val: float | None) -> str:
+    if a_val is None or b_val is None:
+        return "—"
+    decimals = _DELTA_DECIMALS.get(stat, 3)
+    return f"{(a_val - b_val):+.{decimals}f}"
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -94,6 +111,7 @@ with st.sidebar:
 
     split_type_label = st.radio("Split", list(SPLIT_TYPE_MAP.keys()))
     split_type = SPLIT_TYPE_MAP[split_type_label]
+    comparison_mode = st.checkbox("Comparison mode", key="comparison_mode")
 
     if "selected_stats_requested" not in st.session_state:
         st.session_state["selected_stats_requested"] = CORE_STATS.copy()
@@ -174,6 +192,36 @@ with st.sidebar:
         if st.button("Clear player", use_container_width=True):
             st.session_state["_clear_player_pending"] = True
             st.rerun()
+
+    selected_name_b = None
+    if comparison_mode:
+        if st.session_state.pop("_clear_player_b_pending", False):
+            st.session_state["player_b_selectbox"] = None
+
+        player_b_names = [n for n in player_names if n != selected_name]
+
+        _prev_player_b = st.session_state.get("player_b_selectbox")
+        _player_b_not_in_season = (
+            _prev_player_b is not None and _prev_player_b not in player_b_names
+        )
+        if _player_b_not_in_season:
+            player_b_names = [_prev_player_b] + player_b_names
+
+        selected_name_b = st.selectbox(
+            "Player B",
+            options=player_b_names,
+            index=None,
+            placeholder="Type to search…",
+            key="player_b_selectbox",
+        )
+
+        if _player_b_not_in_season and selected_name_b == _prev_player_b:
+            st.warning(f"No qualifying data for {selected_name_b} in {season}.")
+
+        if selected_name_b is not None:
+            if st.button("Clear player B", use_container_width=True):
+                st.session_state["_clear_player_b_pending"] = True
+                st.rerun()
 
     # --- filter row session state init ---
     if "filter_rows" not in st.session_state:
@@ -309,6 +357,11 @@ if selected_name is None:
     render_glossary()
     st.stop()
 
+if comparison_mode and selected_name_b is None:
+    st.info("Select **Player B** in the sidebar to compare two players.")
+    render_glossary()
+    st.stop()
+
 
 # ---------------------------------------------------------------------------
 # Resolve player metadata
@@ -333,6 +386,28 @@ if mlbam_id is None:
     st.error(f"Could not resolve a Statcast ID for {selected_name}.")
     st.stop()
 
+team_b = None
+mlbam_id_b = None
+if comparison_mode:
+    player_row_b = get_player_row(season_df, selected_name_b)
+    if player_row_b is None:
+        st.warning(
+            f"{selected_name_b} has no qualifying data in the {season} season "
+            "(fewer than 50 plate appearances or season not yet available). "
+            "Select a different season or use **Clear player B** in the sidebar."
+        )
+        st.stop()
+
+    fg_id_b = int(player_row_b["IDfg"])
+    team_b = str(player_row_b.get("Team", "—"))
+
+    with st.spinner("Resolving Player B ID…"):
+        mlbam_id_b = get_mlbam_id(fg_id_b, player_name=selected_name_b)
+
+    if mlbam_id_b is None:
+        st.error(f"Could not resolve a Statcast ID for {selected_name_b}.")
+        st.stop()
+
 
 # ---------------------------------------------------------------------------
 # Fetch Statcast data + apply filters
@@ -354,22 +429,48 @@ statcast_df = get_prepared_df_cached(
 filtered_df = apply_filters(statcast_df, filters)
 sample_sizes = get_sample_sizes(filtered_df)
 
+statcast_df_b = None
+filtered_df_b = None
+sample_sizes_b = None
+if comparison_mode and mlbam_id_b is not None:
+    with st.spinner(f"Loading {season} Statcast data for {selected_name_b}…"):
+        raw_statcast_df_b = get_statcast_batter(mlbam_id_b, season)
+    prepare_cache_key_b = (int(mlbam_id_b), int(season), str(player_type))
+    statcast_df_b = get_prepared_df_cached(
+        raw_statcast_df_b,
+        prepared_cache,
+        prepare_cache_key_b,
+        log_fn=print,
+    )
+    filtered_df_b = apply_filters(statcast_df_b, filters)
+    sample_sizes_b = get_sample_sizes(filtered_df_b)
+
 missing_stat_requirements: dict[str, list[str]] = {}
 selected_stats: list[str] = []
+validation_frames: list[tuple[str, object]] = [(selected_name, statcast_df)]
+if comparison_mode and statcast_df_b is not None:
+    validation_frames.append((selected_name_b, statcast_df_b))
+
 for stat in selected_stats_requested:
     spec = STAT_REGISTRY.get(stat)
     if spec is None:
         continue
-    missing_cols = [col for col in spec.required_cols if col not in statcast_df.columns]
-    if missing_cols:
-        missing_stat_requirements[stat] = missing_cols
+
+    missing_notes: list[str] = []
+    for player_label, df_for_player in validation_frames:
+        missing_cols = [col for col in spec.required_cols if col not in df_for_player.columns]
+        if missing_cols:
+            missing_notes.append(f"{player_label}: {', '.join(missing_cols)}")
+
+    if missing_notes:
+        missing_stat_requirements[stat] = missing_notes
         continue
     selected_stats.append(stat)
 
 if missing_stat_requirements:
     missing_text = ", ".join(
-        f"{stat} (missing: {', '.join(cols)})"
-        for stat, cols in missing_stat_requirements.items()
+        f"{stat} ({'; '.join(notes)})"
+        for stat, notes in missing_stat_requirements.items()
     )
     st.warning(f"Some selected stats were skipped due to missing data columns: {missing_text}.")
 
@@ -386,12 +487,25 @@ distributions = build_league_distributions(season_df)
 percentiles   = get_all_percentiles(player_stats, distributions)
 color_tiers   = get_all_color_tiers(percentiles)
 
+player_stats_b = None
+percentiles_b = None
+color_tiers_b = None
+if comparison_mode and filtered_df_b is not None:
+    _raw_b = _compute_stats(filtered_df_b)
+    player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
+    percentiles_b = get_all_percentiles(player_stats_b, distributions)
+    color_tiers_b = get_all_color_tiers(percentiles_b)
+
 
 # ---------------------------------------------------------------------------
 # Player header
 # ---------------------------------------------------------------------------
 
-player_header(selected_name, team, season, player_type)
+if comparison_mode and team_b is not None:
+    st.subheader(f"{selected_name} vs {selected_name_b}")
+    st.caption(f"{team} vs {team_b} · {season} · {player_type}")
+else:
+    player_header(selected_name, team, season, player_type)
 
 if player_type == "Pitcher":
     st.warning("Pitcher splits are coming in a future update. Showing batter stats.")
@@ -408,15 +522,28 @@ if active_filter_summary == "No filters (full season data)":
 else:
     st.caption(f"Active filters: {active_filter_summary}")
 
-sample_parts = [f"N_pitches: {sample_sizes['N_pitches']:,}"]
-if sample_sizes["N_BIP"] is not None:
-    sample_parts.append(f"N_BIP: {sample_sizes['N_BIP']:,}")
-if sample_sizes["approx_PA"] is not None:
-    sample_parts.append(f"Approx PA: {sample_sizes['approx_PA']:,}")
-st.caption(f"Sample size: {' | '.join(sample_parts)}")
-
 st.subheader("Season Stats")
-stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
+if comparison_mode and player_stats_b is not None and percentiles_b is not None and color_tiers_b is not None:
+    st.caption(f"Sample size A ({selected_name}): {_sample_size_text(sample_sizes)}")
+    st.caption(f"Sample size B ({selected_name_b}): {_sample_size_text(sample_sizes_b)}")
+
+    col_a, col_b, col_delta = st.columns(3)
+    with col_a:
+        st.caption(f"Player A: {selected_name}")
+        stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
+    with col_b:
+        st.caption(f"Player B: {selected_name_b}")
+        stat_cards_row(player_stats_b, percentiles_b, color_tiers_b, stats_order=selected_stats)
+    with col_delta:
+        st.caption("Delta (A - B)")
+        if not selected_stats:
+            st.info("No stats selected.")
+        else:
+            for stat in selected_stats:
+                st.metric(stat, _delta_text(stat, player_stats.get(stat), player_stats_b.get(stat)))
+else:
+    st.caption(f"Sample size: {_sample_size_text(sample_sizes)}")
+    stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
 
 st.divider()
 
@@ -426,7 +553,13 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader("Percentile Rankings vs. League")
-percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
+if comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
+    st.caption(f"Player A: {selected_name}")
+    percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
+    st.caption(f"Player B: {selected_name_b}")
+    percentile_bar_chart(percentiles_b, color_tiers_b, player_stats_b, stats_order=selected_stats)
+else:
+    percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
 
 st.divider()
 
@@ -437,19 +570,54 @@ st.divider()
 
 st.subheader(f"Splits: {split_type_label}")
 
-if statcast_df.empty:
-    st.warning(
-        f"No Statcast data found for {selected_name} in {season}. "
-        "They may not have had enough plate appearances or the season data "
-        "may not yet be available."
-    )
+if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
+    left_split_col, right_split_col = st.columns(2)
+
+    with left_split_col:
+        st.caption(f"Player A: {selected_name}")
+        if statcast_df.empty:
+            st.warning(
+                f"No Statcast data found for {selected_name} in {season}. "
+                "They may not have had enough plate appearances or the season data "
+                "may not yet be available."
+            )
+        else:
+            splits_df = get_splits(filtered_df, split_type)
+            if splits_df.empty or splits_df["PA"].sum() == 0:
+                st.info("No plate appearances found for the selected split.")
+            else:
+                split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
+                split_table(splits_df[split_cols])
+
+    with right_split_col:
+        st.caption(f"Player B: {selected_name_b}")
+        if statcast_df_b.empty:
+            st.warning(
+                f"No Statcast data found for {selected_name_b} in {season}. "
+                "They may not have had enough plate appearances or the season data "
+                "may not yet be available."
+            )
+        else:
+            splits_df_b = get_splits(filtered_df_b, split_type)
+            if splits_df_b.empty or splits_df_b["PA"].sum() == 0:
+                st.info("No plate appearances found for the selected split.")
+            else:
+                split_cols_b = ["Split", "PA"] + [s for s in selected_stats if s in splits_df_b.columns]
+                split_table(splits_df_b[split_cols_b])
 else:
-    splits_df = get_splits(filtered_df, split_type)
-    if splits_df.empty or splits_df["PA"].sum() == 0:
-        st.info("No plate appearances found for the selected split.")
+    if statcast_df.empty:
+        st.warning(
+            f"No Statcast data found for {selected_name} in {season}. "
+            "They may not have had enough plate appearances or the season data "
+            "may not yet be available."
+        )
     else:
-        split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
-        split_table(splits_df[split_cols])
+        splits_df = get_splits(filtered_df, split_type)
+        if splits_df.empty or splits_df["PA"].sum() == 0:
+            st.info("No plate appearances found for the selected split.")
+        else:
+            split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
+            split_table(splits_df[split_cols])
 
 st.divider()
 
