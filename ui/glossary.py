@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+import pandas as pd
 import streamlit as st
-
-from stats.percentiles import COLOR_TIERS
 
 # ---------------------------------------------------------------------------
 # Stat definitions
@@ -286,59 +285,74 @@ def _compact_context_text(context: str) -> str:
     return text.split("·", 1)[0].strip()
 
 
+def _compact_meaning_text(definition: str, max_len: int = 96) -> str:
+    text = " ".join(definition.strip().split())
+    if not text:
+        return ""
+    sentence = text.split(". ", 1)[0].strip()
+    if not sentence.endswith("."):
+        sentence += "."
+    if len(sentence) <= max_len:
+        return sentence
+    return sentence[: max_len - 1].rstrip() + "…"
+
+
+def _compact_better_text(
+    batter_direction: str,
+    pitcher_direction: str | None,
+) -> str:
+    batter_icon = _direction_icon(batter_direction)
+    if batter_direction == "Context-dependent":
+        return "info"
+    if pitcher_direction and pitcher_direction != batter_direction:
+        pitcher_icon = _direction_icon(pitcher_direction)
+        return f"{batter_icon} hitter / {pitcher_icon} pitcher"
+    if pitcher_direction and "pitcher" in pitcher_direction.lower():
+        return f"{_direction_icon(pitcher_direction)} pitcher"
+    return f"{batter_icon} both"
+
+
 def render_glossary(mode: Literal["full", "compact"] = "full", player_type: str | None = None) -> None:
     """Render the full glossary and percentile explainer inside a Streamlit expander."""
     if mode == "compact":
-        st.markdown(
-            " | ".join(
-                [
-                    "**Color Scale:**",
-                    "Red 90-100",
-                    "Orange 70-89",
-                    "Yellow 50-69",
-                    "Blue 30-49",
-                    "Gray 0-29",
-                ]
-            )
-        )
+        st.caption("Color scale: 90-100 Elite | 70-89 Above avg | 50-69 Avg | 30-49 Below avg | 0-29 Well below")
+        rows = []
         for stat, info in STAT_DEFINITIONS.items():
-            full_name = str(info["full_name"])
-            denominator = _compact_denominator_text(str(info["denominator"]))
-            direction = _compact_direction_text(
-                str(info["direction"]),
-                str(info["direction_pitcher"]) if info["direction_pitcher"] else None,
-                player_type=player_type,
-            )
+            batter_direction = str(info["direction"])
+            pitcher_direction = str(info["direction_pitcher"]) if info["direction_pitcher"] else None
+            meaning = _compact_meaning_text(str(info["definition"]))
             context = _compact_context_text(str(info["context"]))
-            st.markdown(
-                f"**{stat}** — {full_name}. {denominator}. {direction}. {context}."
+            if context:
+                meaning = f"{meaning} {context}."
+            rows.append(
+                {
+                    "Stat": stat,
+                    "Meaning": meaning,
+                    "Denom": _compact_denominator_text(str(info["denominator"])),
+                    "Better": _compact_better_text(batter_direction, pitcher_direction),
+                }
             )
+
+        compact_df = pd.DataFrame(rows, columns=["Stat", "Meaning", "Denom", "Better"])
+        st.dataframe(
+            compact_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Stat": st.column_config.TextColumn("Stat", width="small"),
+                "Meaning": st.column_config.TextColumn("Meaning", width="large"),
+                "Denom": st.column_config.TextColumn("Denom", width="small"),
+                "Better": st.column_config.TextColumn("Better", width="small"),
+            },
+        )
         return
 
     with st.expander("Glossary & How to Read Percentiles", expanded=False):
         # ---- Color scale key ----
         st.markdown("#### Percentile Color Scale")
-        tier_labels = [
-            (name.capitalize(), hex_color, label)
-            for (_, name, hex_color), label in zip(
-                COLOR_TIERS,
-                [
-                    "90th–100th percentile — Elite",
-                    "70th–89th percentile — Above average",
-                    "50th–69th percentile — Average",
-                    "30th–49th percentile — Below average",
-                    "0th–29th percentile — Well below average",
-                ],
-            )
-        ]
-
-        badge_html = " &nbsp; ".join(
-            f'<span style="background:{hex_};color:#fff;padding:3px 12px;'
-            f'border-radius:99px;font-size:12px;font-weight:700;">'
-            f'{name}: {label}</span>'
-            for name, hex_, label in tier_labels
+        st.markdown(
+            "90–100 Elite | 70–89 Above avg | 50–69 Avg | 30–49 Below avg | 0–29 Well below"
         )
-        st.markdown(badge_html, unsafe_allow_html=True)
         st.markdown("")
 
         # ---- Percentile explainer ----
