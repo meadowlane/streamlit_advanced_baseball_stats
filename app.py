@@ -902,29 +902,45 @@ with st.expander("Player Trend by Year", expanded=False):
     )
 
     trend_filters = filters if apply_trend_filters else SplitFilters()
-    with st.spinner("Loading trend data… (first load may take ~30s)"):
-        trend_data_a = get_trend_stats(
-            mlbam_id,
-            trend_seasons,
-            player_type,
-            trend_filters,
-            get_statcast_batter,
-            prepared_cache,
+    trend_data_b_trend = None
+    trend_total_steps = len(trend_seasons) * (2 if comparison_mode and mlbam_id_b is not None else 1)
+    trend_progress_count = {"done": 0}
+    trend_progress = st.progress(0.0, text=f"Loading trend data... 0/{trend_total_steps} seasons")
+
+    def _on_trend_year_loaded(_idx: int, _total: int, season: int, _elapsed: float) -> None:
+        trend_progress_count["done"] += 1
+        done = trend_progress_count["done"]
+        progress_value = 1.0 if trend_total_steps == 0 else done / trend_total_steps
+        trend_progress.progress(
+            progress_value,
+            text=f"Loading trend data... {done}/{trend_total_steps} seasons (year {season})",
         )
-        trend_data_b_trend = None
-        if comparison_mode and mlbam_id_b is not None:
-            trend_data_b_trend = get_trend_stats(
-                mlbam_id_b,
-                trend_seasons,
-                player_type,
-                trend_filters,
-                get_statcast_batter,
-                prepared_cache,
-            )
+
+    trend_data_a = get_trend_stats(
+        mlbam_id=mlbam_id,
+        seasons=trend_seasons,
+        player_type=player_type,
+        filters=trend_filters,
+        prepare_cache=prepared_cache,
+        stat_key=selected_trend_stat,
+        progress_cb=_on_trend_year_loaded,
+    )
+    if comparison_mode and mlbam_id_b is not None:
+        trend_data_b_trend = get_trend_stats(
+            mlbam_id=mlbam_id_b,
+            seasons=trend_seasons,
+            player_type=player_type,
+            filters=trend_filters,
+            prepare_cache=prepared_cache,
+            stat_key=selected_trend_stat,
+            progress_cb=_on_trend_year_loaded,
+        )
+
+    trend_progress.empty()
 
     render_trend_section(
         trend_data_a=trend_data_a,
-        selected_stats=available_trend_stats,
+        selected_stats=[selected_trend_stat],
         selected_stat=selected_trend_stat,
         year_range=trend_year_range,
         player_label_a=selected_name,

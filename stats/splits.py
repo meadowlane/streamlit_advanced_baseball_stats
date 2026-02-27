@@ -18,10 +18,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Literal
+import os
+import time
 
 import pandas as pd
+import streamlit as st
 
-from stats.filters import SplitFilters, apply_filters, get_prepared_df_cached
+from data.fetcher import load_or_fetch_year_df
+from stats.filters import SplitFilters, apply_filters, get_prepared_df_cached, prepare_df
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -87,6 +91,8 @@ MONTH_NAMES = {
     9: "September",
     10: "October",
 }
+
+_DEBUG_TREND_TIMING = os.getenv("DEBUG_TREND_TIMING", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +262,95 @@ def _compute_stats(df: pd.DataFrame) -> dict:
     return stats
 
 
+FiltersSignature = tuple[
+    int | None,
+    int | None,
+    str | None,
+    str | None,
+    int | None,
+    int | None,
+    int | None,
+]
+
+
+def _normalize_player_mode(player_type: str) -> str:
+    lowered = str(player_type).strip().lower()
+    return "pitcher" if lowered.startswith("pitch") else "batter"
+
+
+def _filters_signature_from_filters(filters: SplitFilters) -> FiltersSignature:
+    return (
+        filters.inning_min,
+        filters.inning_max,
+        filters.pitcher_hand,
+        filters.home_away,
+        filters.month,
+        filters.balls,
+        filters.strikes,
+    )
+
+
+def _filters_from_signature(signature: FiltersSignature) -> SplitFilters:
+    return SplitFilters(
+        inning_min=signature[0],
+        inning_max=signature[1],
+        pitcher_hand=signature[2],  # type: ignore[arg-type]
+        home_away=signature[3],  # type: ignore[arg-type]
+        month=signature[4],
+        balls=signature[5],
+        strikes=signature[6],
+    )
+
+
+def _compute_selected_stat(df: pd.DataFrame, stat_key: str) -> dict[str, float | int | None]:
+    pa = _pa_events(df)
+    n_pa = len(pa)
+    if n_pa == 0:
+        return {"PA": 0, stat_key: None}
+
+    spec = STAT_REGISTRY.get(stat_key)
+    if spec is None:
+        raise ValueError(f"Unknown trend stat key {stat_key!r}.")
+
+    bb_df = _batted_ball_events(pa)
+    raw_value = spec.compute_fn(pa, bb_df, n_pa)
+    return {"PA": n_pa, stat_key: _format_stat_value(raw_value, spec.formatter)}
+
+
+@st.cache_data(show_spinner=False)
+def load_or_fetch_prepared_year_df(player_id: int, year: int, mode: str) -> pd.DataFrame:
+    """Load a year of Statcast data and run prepare_df once per (player, year, mode)."""
+    raw_df = load_or_fetch_year_df(player_id, year, _normalize_player_mode(mode))
+    return prepare_df(raw_df)
+
+
+@st.cache_data(show_spinner=False)
+def compute_year_stat(
+    player_id: int,
+    year: int,
+    mode: str,
+    filters_signature: FiltersSignature,
+    stat_key: str,
+) -> dict[str, float | int | None]:
+    """Compute one trend stat (or all stats) + sample sizes for a single season."""
+    mode_key = _normalize_player_mode(mode)
+    prepared = load_or_fetch_prepared_year_df(player_id, year, mode_key)
+    filters = _filters_from_signature(filters_signature)
+    filtered = apply_filters(prepared, filters)
+
+    if stat_key == "__all__":
+        stats = _compute_stats(filtered)
+    else:
+        stats = _compute_selected_stat(filtered, stat_key)
+
+    sample_sizes = get_sample_sizes(filtered)
+    stats["season"] = int(year)
+    stats["n_pitches"] = sample_sizes.get("N_pitches")
+    stats["n_bip"] = sample_sizes.get("N_BIP")
+    stats["approx_pa"] = sample_sizes.get("approx_PA")
+    return stats
+
+
 def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:
     """Return display-ready sample sizes for a (possibly filtered) Statcast subset.
 
@@ -356,57 +451,81 @@ def get_trend_stats(
     seasons: list[int],
     player_type: str,
     filters: SplitFilters,
-    fetch_fn: Callable[[int, int], pd.DataFrame],
-    prepare_cache: dict,
+    fetch_fn: Callable[[int, int], pd.DataFrame] | None = None,
+    prepare_cache: dict | None = None,
+    stat_key: str | None = None,
+    debug_timing: bool | None = None,
+    progress_cb: Callable[[int, int, int, float], None] | None = None,
 ) -> list[dict]:
     """Return per-season stat dicts for trend charting.
 
-    For each season in *seasons*, fetches raw Statcast data via *fetch_fn*,
-    prepares it (shared with the single-season view via *prepare_cache*),
-    applies *filters*, then computes all 6 core stats.
-
-    Parameters
-    ----------
-    mlbam_id : int
-        MLBAM player ID.
-    seasons : list[int]
-        Ordered list of season years to include (e.g. [2019, 2020, ..., 2025]).
-    player_type : str
-        Player type string (currently always "Batter"); used as the third
-        component of the prepare_cache key to match the existing convention.
-    filters : SplitFilters
-        Active filter configuration. Applied identically within each season.
-    fetch_fn : Callable[[int, int], pd.DataFrame]
-        Callable with signature ``(mlbam_id, season) -> DataFrame``.
-        Production code passes ``get_statcast_batter``; tests pass a stub.
-        This injection point also serves as the extension seam for pre-2015
-        data sources — any adapter that satisfies the signature and produces a
-        DataFrame with compatible columns will work transparently.
-    prepare_cache : dict
-        The session-state memoisation dict keyed by ``(player_id, season, type)``.
-        Shared with the single-season view so prepared DataFrames are reused
-        when both views are active in the same session.
-
-    Returns
-    -------
-    list[dict]
-        One dict per season in the same order as *seasons*. Each dict has:
-        ``{"season": int, "PA": int, "wOBA": float|None, "xwOBA": float|None,
-        "K%": float|None, "BB%": float|None, "HardHit%": float|None,
-        "Barrel%": float|None}``.
-        Seasons with no data (empty fetch) produce PA=0 and all stats None.
+    Uses cached per-year loading/preparation by default. When *fetch_fn* is
+    injected (tests), the function follows the legacy path and preserves
+    prepare_cache semantics.
     """
+    stat_key_cache = stat_key if stat_key is not None else "__all__"
+    mode_key = _normalize_player_mode(player_type)
+    filters_signature = _filters_signature_from_filters(filters)
+    use_debug_timing = _DEBUG_TREND_TIMING if debug_timing is None else bool(debug_timing)
+
     results: list[dict] = []
-    for season in seasons:
-        raw_df = fetch_fn(mlbam_id, season)
-        cache_key = (int(mlbam_id), int(season), str(player_type))
-        prepared = get_prepared_df_cached(raw_df, prepare_cache, cache_key)
-        filtered = apply_filters(prepared, filters)
-        stats = _compute_stats(filtered)
-        sample_sizes = get_sample_sizes(filtered)
-        stats["season"] = season
-        stats["n_pitches"] = sample_sizes.get("N_pitches")
-        stats["n_bip"] = sample_sizes.get("N_BIP")
-        stats["approx_pa"] = sample_sizes.get("approx_PA")
+    total_seasons = len(seasons)
+    trend_start = time.perf_counter()
+    effective_prepare_cache = prepare_cache if prepare_cache is not None else {}
+
+    for idx, season in enumerate(seasons, start=1):
+        season_start = time.perf_counter()
+
+        if fetch_fn is None:
+            stats = compute_year_stat(
+                player_id=int(mlbam_id),
+                year=int(season),
+                mode=mode_key,
+                filters_signature=filters_signature,
+                stat_key=stat_key_cache,
+            )
+
+            # Keep session-state prepare cache warm for the single-season view.
+            if prepare_cache is not None:
+                cache_key = (int(mlbam_id), int(season), str(player_type))
+                if cache_key not in prepare_cache:
+                    prepare_cache[cache_key] = load_or_fetch_prepared_year_df(
+                        int(mlbam_id),
+                        int(season),
+                        mode_key,
+                    )
+        else:
+            raw_df = fetch_fn(mlbam_id, season)
+            cache_key = (int(mlbam_id), int(season), str(player_type))
+            prepared = get_prepared_df_cached(raw_df, effective_prepare_cache, cache_key)
+            filtered = apply_filters(prepared, filters)
+            if stat_key_cache == "__all__":
+                stats = _compute_stats(filtered)
+            else:
+                stats = _compute_selected_stat(filtered, stat_key_cache)
+            sample_sizes = get_sample_sizes(filtered)
+            stats["season"] = int(season)
+            stats["n_pitches"] = sample_sizes.get("N_pitches")
+            stats["n_bip"] = sample_sizes.get("N_BIP")
+            stats["approx_pa"] = sample_sizes.get("approx_PA")
+
+        elapsed = time.perf_counter() - season_start
+        if use_debug_timing:
+            print(
+                f"[trend] player={mlbam_id} season={season} stat={stat_key_cache} "
+                f"elapsed={elapsed:.3f}s"
+            )
+
+        if progress_cb is not None:
+            progress_cb(idx, total_seasons, int(season), elapsed)
+
         results.append(stats)
+
+    if use_debug_timing:
+        total_elapsed = time.perf_counter() - trend_start
+        print(
+            f"[trend] player={mlbam_id} seasons={total_seasons} stat={stat_key_cache} "
+            f"total={total_elapsed:.3f}s"
+        )
+
     return results
