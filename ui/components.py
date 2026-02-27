@@ -186,6 +186,7 @@ _CARD_HTML = """
 
 
 def stat_card(
+    stat_key: str,
     label: str,
     value: float | None,
     percentile: float,
@@ -193,7 +194,8 @@ def stat_card(
 ) -> None:
     """Render a single stat card with a colored percentile badge."""
     hex_color = color_tier.get("hex", "#95A5A6")
-    val_str = format_stat_value(label, value)
+    # Always format by internal stat key; display label may be an override.
+    val_str = format_stat_value(stat_key, value)
     pct_str = format_percentile(percentile)
     st.markdown(
         _CARD_CSS.format(hex=hex_color)
@@ -221,6 +223,7 @@ def stat_cards_row(
         for col, stat in zip(cols, order):
             with col:
                 stat_card(
+                    stat_key=stat,
                     label=(label_overrides or {}).get(stat, stat),
                     value=stat_values.get(stat),
                     percentile=percentiles.get(stat, np.nan),
@@ -238,6 +241,7 @@ def stat_cards_row(
                 if idx < len(row_stats):
                     stat = row_stats[idx]
                     stat_card(
+                        stat_key=stat,
                         label=label_map.get(stat, stat),
                         value=stat_values.get(stat),
                         percentile=percentiles.get(stat, np.nan),
