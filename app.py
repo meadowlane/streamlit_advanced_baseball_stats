@@ -4,9 +4,11 @@ import streamlit as st
 
 from data.fetcher import (
     get_batting_stats,
+    get_pitching_stats,
     get_mlbam_id,
     get_player_row,
     get_statcast_batter,
+    get_statcast_pitcher,
 )
 from stats.percentiles import (
     build_league_distributions,
@@ -48,7 +50,7 @@ CURRENT_YEAR = dt.date.today().year
 STATCAST_SEASONS = list(range(CURRENT_YEAR, STATCAST_START_YEAR - 1, -1))
 SEASONS = STATCAST_SEASONS
 DEFAULT_SEASON = max(STATCAST_START_YEAR, CURRENT_YEAR - 1)
-FEATURE_PITCHERS = False
+FEATURE_PITCHERS = True
 DEFAULT_PLAYER_TYPE = "Batter"
 
 SPLIT_TYPE_MAP = {
@@ -126,12 +128,16 @@ def _make_type_change_cb(row_id: str):
     return _cb
 
 
-def _sample_size_text(sample_sizes: dict[str, int | None]) -> str:
+def _appearance_label(player_type: str) -> str:
+    return "Approx. BF" if player_type == "Pitcher" else "Approx. PA"
+
+
+def _sample_size_text(sample_sizes: dict[str, int | None], player_type: str) -> str:
     parts = [f"Pitches: {sample_sizes['N_pitches']:,}"]
     if sample_sizes["N_BIP"] is not None:
         parts.append(f"Balls in play: {sample_sizes['N_BIP']:,}")
     if sample_sizes["approx_PA"] is not None:
-        parts.append(f"Approx. PA: {sample_sizes['approx_PA']:,}")
+        parts.append(f"{_appearance_label(player_type)}: {sample_sizes['approx_PA']:,}")
     return " | ".join(parts)
 
 
@@ -246,6 +252,11 @@ with st.sidebar:
     elif query_authed:
         st.session_state["enable_query_input"] = True
 
+    # Player-type mode selector (feature-flagged).
+    player_type = DEFAULT_PLAYER_TYPE
+    if FEATURE_PITCHERS:
+        player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
+
     if st.session_state["enable_query_input"]:
         with st.form("nl_query_form"):
             st.text_area("Type a query…", key="nl_query_input", height=100)
@@ -274,7 +285,11 @@ with st.sidebar:
             lookup_season = parsed_year if parsed_year in SEASONS else st.session_state["season_a"]
 
             with st.spinner("Parsing query…"):
-                lookup_df = get_batting_stats(lookup_season)
+                lookup_df = (
+                    get_batting_stats(lookup_season)
+                    if player_type == "Batter"
+                    else get_pitching_stats(lookup_season)
+                )
 
             lookup_player_names = sorted(
                 lookup_df["Name"].dropna().unique().tolist(),
@@ -332,11 +347,6 @@ with st.sidebar:
                     st.warning(" | ".join(preview["warnings"]))
                 st.json(preview)
 
-    # Batter-only MVP: keep pitcher code paths in place but unreachable in UI.
-    player_type = DEFAULT_PLAYER_TYPE
-    if FEATURE_PITCHERS:
-        player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
-
     # ── Season & split ────────────────────────────────────────────────────────
     if st.session_state["season_a"] not in SEASONS:
         st.session_state["season_a"] = DEFAULT_SEASON
@@ -355,7 +365,11 @@ with st.sidebar:
 
     # ── Player list load ──────────────────────────────────────────────────────
     with st.spinner("Loading player list…"):
-        season_df = get_batting_stats(season_a)
+        season_df = (
+            get_batting_stats(season_a)
+            if player_type == "Batter"
+            else get_pitching_stats(season_a)
+        )
     if season_df.empty and season_df.attrs.get("warning"):
         st.warning(str(season_df.attrs["warning"]))
 
@@ -420,7 +434,11 @@ with st.sidebar:
         # Load Player B's FG data for the correct season (may differ from A when unlinked).
         if not link_seasons and season_b != season_a:
             with st.spinner("Loading Player B player list…"):
-                season_df_b_fg = get_batting_stats(season_b)
+                season_df_b_fg = (
+                    get_batting_stats(season_b)
+                    if player_type == "Batter"
+                    else get_pitching_stats(season_b)
+                )
             if season_df_b_fg.empty and season_df_b_fg.attrs.get("warning"):
                 st.warning(str(season_df_b_fg.attrs["warning"]))
             player_b_names = sorted(
@@ -571,7 +589,8 @@ with st.sidebar:
                 if k not in st.session_state:
                     st.session_state[k] = row["params"].get("hand", "R")
                 hand = st.radio(
-                    "Pitcher hand", ["L", "R"],
+                    "Batter hand" if player_type == "Pitcher" else "Pitcher hand",
+                    ["L", "R"],
                     key=k, horizontal=True, label_visibility="collapsed",
                 )
                 row["params"]["hand"] = hand
@@ -618,6 +637,8 @@ with st.sidebar:
                 st.divider()
 
     active_filter_summary = summarize_filter_rows(st.session_state["filter_rows"])
+    if player_type == "Pitcher":
+        active_filter_summary = active_filter_summary.replace("Pitcher handedness", "Batter handedness")
     st.caption(f"Active: {active_filter_summary}")
 
     filters = rows_to_split_filters(st.session_state["filter_rows"])
@@ -638,8 +659,8 @@ if selected_name is None:
     if season_df.empty and season_df.attrs.get("warning"):
         st.warning(str(season_df.attrs["warning"]))
     st.markdown(
-        "Search for a batter in the sidebar to view advanced Statcast stats "
-        "and splits by pitcher handedness, home/away, or month."
+        "Search for a player in the sidebar to view advanced Statcast stats "
+        "and splits by handedness, home/away, or month."
     )
     render_glossary()
     st.stop()
@@ -697,7 +718,8 @@ if comparison_mode and selected_name_b is not None:
 # ---------------------------------------------------------------------------
 
 with st.spinner(f"Loading {season_a} Statcast data for {selected_name}…"):
-    raw_statcast_df = get_statcast_batter(mlbam_id, season_a)
+    fetch_statcast_fn = get_statcast_batter if player_type == "Batter" else get_statcast_pitcher
+    raw_statcast_df = fetch_statcast_fn(mlbam_id, season_a)
 
 prepared_cache = st.session_state.setdefault(_PREPARED_DF_CACHE_KEY, {})
 prepare_cache_key = (int(mlbam_id), int(season_a), str(player_type))
@@ -708,7 +730,7 @@ statcast_df = get_prepared_df_cached(
     log_fn=print,
 )
 
-filtered_df = apply_filters(statcast_df, filters)
+filtered_df = apply_filters(statcast_df, filters, player_type=player_type)
 sample_sizes = get_sample_sizes(filtered_df)
 
 statcast_df_b = None
@@ -716,7 +738,7 @@ filtered_df_b = None
 sample_sizes_b = None
 if comparison_mode and mlbam_id_b is not None:
     with st.spinner(f"Loading {season_b} Statcast data for {selected_name_b}…"):
-        raw_statcast_df_b = get_statcast_batter(mlbam_id_b, season_b)
+        raw_statcast_df_b = fetch_statcast_fn(mlbam_id_b, season_b)
     prepare_cache_key_b = (int(mlbam_id_b), int(season_b), str(player_type))
     statcast_df_b = get_prepared_df_cached(
         raw_statcast_df_b,
@@ -724,7 +746,7 @@ if comparison_mode and mlbam_id_b is not None:
         prepare_cache_key_b,
         log_fn=print,
     )
-    filtered_df_b = apply_filters(statcast_df_b, filters)
+    filtered_df_b = apply_filters(statcast_df_b, filters, player_type=player_type)
     sample_sizes_b = get_sample_sizes(filtered_df_b)
 
 missing_stat_requirements: dict[str, list[str]] = {}
@@ -799,9 +821,6 @@ if comparison_mode and team_b is not None:
 else:
     player_header(selected_name, team, season_a, player_type)
 
-if player_type == "Pitcher":
-    st.warning("Pitcher splits are coming in a future update. Showing batter stats.")
-
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
 
@@ -822,11 +841,11 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
     col_a, col_b, col_delta = st.columns(3)
     with col_a:
         st.markdown(f"**{selected_name}**")
-        st.caption(_sample_size_text(sample_sizes))
+        st.caption(_sample_size_text(sample_sizes, player_type))
         _render_player_stat_grid(player_stats, percentiles, color_tiers, selected_stats)
     with col_b:
         st.markdown(f"**{selected_name_b}**")
-        st.caption(_sample_size_text(sample_sizes_b))
+        st.caption(_sample_size_text(sample_sizes_b, player_type))
         _render_player_stat_grid(player_stats_b, percentiles_b, color_tiers_b, selected_stats)
     with col_delta:
         if season_a != season_b:
@@ -838,7 +857,7 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
         )
         _render_delta_stat_grid(selected_stats, player_stats, player_stats_b)
 else:
-    st.caption(f"Sample size: {_sample_size_text(sample_sizes)}")
+    st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
     stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
 
 st.divider()
@@ -879,9 +898,9 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
                 "may not yet be available."
             )
         else:
-            splits_df = get_splits(filtered_df, split_type)
+            splits_df = get_splits(filtered_df, split_type, player_type=player_type)
             if splits_df.empty or splits_df["PA"].sum() == 0:
-                st.info("No plate appearances found for the selected split.")
+                st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
             else:
                 split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
                 split_table(splits_df[split_cols])
@@ -895,9 +914,9 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
                 "may not yet be available."
             )
         else:
-            splits_df_b = get_splits(filtered_df_b, split_type)
+            splits_df_b = get_splits(filtered_df_b, split_type, player_type=player_type)
             if splits_df_b.empty or splits_df_b["PA"].sum() == 0:
-                st.info("No plate appearances found for the selected split.")
+                st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
             else:
                 split_cols_b = ["Split", "PA"] + [s for s in selected_stats if s in splits_df_b.columns]
                 split_table(splits_df_b[split_cols_b])
@@ -909,9 +928,9 @@ else:
             "may not yet be available."
         )
     else:
-        splits_df = get_splits(filtered_df, split_type)
+        splits_df = get_splits(filtered_df, split_type, player_type=player_type)
         if splits_df.empty or splits_df["PA"].sum() == 0:
-            st.info("No plate appearances found for the selected split.")
+            st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
         else:
             split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
             split_table(splits_df[split_cols])
@@ -994,7 +1013,7 @@ with st.expander("Player Trend by Year", expanded=False):
                 trend_seasons_a,
                 player_type,
                 trend_filters,
-                get_statcast_batter,
+                get_statcast_batter if player_type == "Batter" else get_statcast_pitcher,
                 prepared_cache,
             )
             trend_data_b_trend = None
@@ -1004,7 +1023,7 @@ with st.expander("Player Trend by Year", expanded=False):
                     trend_seasons_b,
                     player_type,
                     trend_filters,
-                    get_statcast_batter,
+                    get_statcast_batter if player_type == "Batter" else get_statcast_pitcher,
                     prepared_cache,
                 )
 

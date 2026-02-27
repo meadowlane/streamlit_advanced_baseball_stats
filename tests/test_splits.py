@@ -303,6 +303,15 @@ class TestSplitByHand:
         lh_row = result[result["Split"] == "vs LHP"].iloc[0]
         assert lh_row["PA"] == 0
 
+    def test_pitcher_mode_uses_batter_stand_column(self):
+        df = _make_df(30)
+        df["stand"] = ["R"] * 18 + ["L"] * 12
+        result = split_by_hand(df, player_type="Pitcher")
+        rhb_row = result[result["Split"] == "vs RHB"].iloc[0]
+        lhb_row = result[result["Split"] == "vs LHB"].iloc[0]
+        assert rhb_row["PA"] == 18
+        assert lhb_row["PA"] == 12
+
 
 # ---------------------------------------------------------------------------
 # split_home_away
@@ -325,6 +334,15 @@ class TestSplitHomeAway:
         result = split_home_away(df)
         home_row = result[result["Split"] == "Home"].iloc[0]
         assert home_row["PA"] == 18
+
+    def test_pitcher_mode_inverts_topbot_mapping(self):
+        topbot = ["Bot"] * 18 + ["Top"] * 12
+        df = _make_df(30, inning_topbot=topbot)
+        result = split_home_away(df, player_type="Pitcher")
+        home_row = result[result["Split"] == "Home"].iloc[0]
+        away_row = result[result["Split"] == "Away"].iloc[0]
+        assert home_row["PA"] == 12
+        assert away_row["PA"] == 18
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +391,12 @@ class TestGetSplits:
         df = _make_df(30, month=[4, 5])
         result = get_splits(df, "monthly")
         assert set(result["Split"]) == {"April", "May"}
+
+    def test_dispatches_pitcher_handedness_labels(self):
+        df = _make_df(30)
+        df["stand"] = ["R", "L"] * 15
+        result = get_splits(df, "hand", player_type="Pitcher")
+        assert set(result["Split"]) == {"vs RHB", "vs LHB"}
 
     def test_invalid_split_type_raises(self):
         with pytest.raises(ValueError, match="Unknown split_type"):

@@ -234,7 +234,14 @@ def _format_stat_value(value: float | None, formatter: Literal["pct_1", "decimal
     return round(value, 3)
 
 
-def _compute_stats(df: pd.DataFrame) -> dict:
+def get_stat_registry(player_type: str) -> dict[str, StatSpec]:
+    """Return the active stat registry for the requested player type."""
+    if str(player_type).strip().lower() == "pitcher":
+        return STAT_REGISTRY
+    return STAT_REGISTRY
+
+
+def _compute_stats(df: pd.DataFrame, player_type: str = "Batter") -> dict:
     """Compute all 6 core stats from a raw Statcast subset.
 
     Accepts all pitches for the subset; filters internally to PA events.
@@ -243,13 +250,15 @@ def _compute_stats(df: pd.DataFrame) -> dict:
     pa = _pa_events(df)
     n_pa = len(pa)
 
+    stat_registry = get_stat_registry(player_type)
+
     if n_pa == 0:
-        return {"PA": 0, **{key: None for key in STAT_REGISTRY}}
+        return {"PA": 0, **{key: None for key in stat_registry}}
 
     bb_df = _batted_ball_events(pa)
     stats: dict[str, float | int | None] = {"PA": n_pa}
 
-    for key, spec in STAT_REGISTRY.items():
+    for key, spec in stat_registry.items():
         raw_value = spec.compute_fn(pa, bb_df, n_pa)
         stats[key] = _format_stat_value(raw_value, spec.formatter)
 
@@ -285,20 +294,24 @@ def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:
 # Public split functions
 # ---------------------------------------------------------------------------
 
-def split_by_hand(df: pd.DataFrame) -> pd.DataFrame:
+def split_by_hand(df: pd.DataFrame, player_type: str = "Batter") -> pd.DataFrame:
     """Return a 2-row DataFrame: vs RHP and vs LHP splits.
 
     Uses the `p_throws` column (pitcher handedness).
     """
     rows = []
-    for hand, label in [("R", "vs RHP"), ("L", "vs LHP")]:
-        subset = df[df["p_throws"] == hand]
-        stats = _compute_stats(subset)
+    is_pitcher = str(player_type).strip().lower() == "pitcher"
+    hand_col = "stand" if is_pitcher else "p_throws"
+    labels = [("R", "vs RHB"), ("L", "vs LHB")] if is_pitcher else [("R", "vs RHP"), ("L", "vs LHP")]
+
+    for hand, label in labels:
+        subset = df[df[hand_col] == hand]
+        stats = _compute_stats(subset, player_type=player_type)
         rows.append({"Split": label, **stats})
     return pd.DataFrame(rows)[SPLIT_COLS]
 
 
-def split_home_away(df: pd.DataFrame) -> pd.DataFrame:
+def split_home_away(df: pd.DataFrame, player_type: str = "Batter") -> pd.DataFrame:
     """Return a 2-row DataFrame: Home and Away splits.
 
     Uses `inning_topbot`: Bot = batter is on home team; Top = away team.
@@ -306,14 +319,16 @@ def split_home_away(df: pd.DataFrame) -> pd.DataFrame:
     so every row belongs to that batter's plate appearance.
     """
     rows = []
-    for topbot, label in [("Bot", "Home"), ("Top", "Away")]:
+    is_pitcher = str(player_type).strip().lower() == "pitcher"
+    topbot_labels = [("Top", "Home"), ("Bot", "Away")] if is_pitcher else [("Bot", "Home"), ("Top", "Away")]
+    for topbot, label in topbot_labels:
         subset = df[df["inning_topbot"] == topbot]
-        stats = _compute_stats(subset)
+        stats = _compute_stats(subset, player_type=player_type)
         rows.append({"Split": label, **stats})
     return pd.DataFrame(rows)[SPLIT_COLS]
 
 
-def split_by_month(df: pd.DataFrame) -> pd.DataFrame:
+def split_by_month(df: pd.DataFrame, player_type: str = "Batter") -> pd.DataFrame:
     """Return one row per calendar month in the data.
 
     Uses `game_date`; months with zero PA are omitted.
@@ -324,7 +339,7 @@ def split_by_month(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for month_num in sorted(df["_month"].dropna().unique()):
         subset = df[df["_month"] == month_num]
-        stats = _compute_stats(subset)
+        stats = _compute_stats(subset, player_type=player_type)
         if stats["PA"] == 0:
             continue
         label = MONTH_NAMES.get(int(month_num), f"Month {int(month_num)}")
@@ -333,7 +348,7 @@ def split_by_month(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)[SPLIT_COLS] if rows else pd.DataFrame(columns=SPLIT_COLS)
 
 
-def get_splits(df: pd.DataFrame, split_type: str) -> pd.DataFrame:
+def get_splits(df: pd.DataFrame, split_type: str, player_type: str = "Batter") -> pd.DataFrame:
     """Dispatch to the correct split function by name.
 
     Parameters
@@ -342,9 +357,9 @@ def get_splits(df: pd.DataFrame, split_type: str) -> pd.DataFrame:
     split_type : one of "hand", "home_away", "monthly"
     """
     dispatch = {
-        "hand": split_by_hand,
-        "home_away": split_home_away,
-        "monthly": split_by_month,
+        "hand": lambda x: split_by_hand(x, player_type=player_type),
+        "home_away": lambda x: split_home_away(x, player_type=player_type),
+        "monthly": lambda x: split_by_month(x, player_type=player_type),
     }
     if split_type not in dispatch:
         raise ValueError(f"Unknown split_type {split_type!r}. Choose from: {list(dispatch)}")
@@ -401,8 +416,8 @@ def get_trend_stats(
         raw_df = fetch_fn(mlbam_id, season)
         cache_key = (int(mlbam_id), int(season), str(player_type))
         prepared = get_prepared_df_cached(raw_df, prepare_cache, cache_key)
-        filtered = apply_filters(prepared, filters)
-        stats = _compute_stats(filtered)
+        filtered = apply_filters(prepared, filters, player_type=player_type)
+        stats = _compute_stats(filtered, player_type=player_type)
         sample_sizes = get_sample_sizes(filtered)
         stats["season"] = season
         stats["n_pitches"] = sample_sizes.get("N_pitches")

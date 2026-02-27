@@ -319,7 +319,7 @@ def _col_ok(df: pd.DataFrame, col: str, filter_name: str) -> bool:
 # Filter application
 # ---------------------------------------------------------------------------
 
-def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
+def apply_filters(df: pd.DataFrame, filters: SplitFilters, player_type: str = "Batter") -> pd.DataFrame:
     """Return a copy of *df* narrowed to the rows matching all active filters.
 
     A filter field is "active" when it is not None.  All active filters are
@@ -336,6 +336,10 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
         Raw Statcast pitch-level DataFrame as returned by get_statcast_batter.
     filters : SplitFilters
         Filter configuration.  None fields are skipped.
+    player_type : str
+        Either ``"Batter"`` or ``"Pitcher"``. In pitcher mode, handedness uses
+        ``stand`` (batter hand) and home/away mapping is inverted so
+        ``home`` corresponds to ``inning_topbot == "Top"``.
 
     Raises
     ------
@@ -366,13 +370,19 @@ def apply_filters(df: pd.DataFrame, filters: SplitFilters) -> pd.DataFrame:
 
     # --- pitcher handedness ----------------------------------------------
     if filters.pitcher_hand is not None:
-        if _col_ok(df, "p_throws", "pitcher_hand"):
-            df = df[df["p_throws"] == filters.pitcher_hand]
+        is_pitcher = str(player_type).strip().lower() == "pitcher"
+        hand_col = "stand" if is_pitcher else "p_throws"
+        if _col_ok(df, hand_col, "pitcher_hand"):
+            df = df[df[hand_col] == filters.pitcher_hand]
 
     # --- home / away -----------------------------------------------------
     if filters.home_away is not None:
         if _col_ok(df, "inning_topbot", "home_away"):
-            topbot = "Bot" if filters.home_away == "home" else "Top"
+            is_pitcher = str(player_type).strip().lower() == "pitcher"
+            if is_pitcher:
+                topbot = "Top" if filters.home_away == "home" else "Bot"
+            else:
+                topbot = "Bot" if filters.home_away == "home" else "Top"
             df = df[df["inning_topbot"] == topbot]
 
     # --- month (prefer precomputed _month; fallback to game_date) --------

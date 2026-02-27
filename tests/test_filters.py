@@ -435,6 +435,17 @@ class TestApplyFiltersPitcherHand:
         with pytest.raises(ValueError, match="p_throws"):
             apply_filters(df, SplitFilters(pitcher_hand="R"))
 
+    def test_pitcher_mode_uses_stand_column(self):
+        df = _make_full_df().copy()
+        df["stand"] = ["R", "L", "R", "L", "R", "L"]
+        result = apply_filters(df, SplitFilters(pitcher_hand="R"), player_type="Pitcher")
+        assert result["inning"].tolist() == [1, 3, 5]
+
+    def test_pitcher_mode_missing_stand_raises(self):
+        df = _make_full_df().drop(columns=["p_throws"])
+        with pytest.raises(ValueError, match="stand"):
+            apply_filters(df, SplitFilters(pitcher_hand="R"), player_type="Pitcher")
+
 
 # ===========================================================================
 # TestApplyFiltersHomeAway
@@ -455,6 +466,14 @@ class TestApplyFiltersHomeAway:
         df = pd.DataFrame({"inning": [1, 2]})
         with pytest.raises(ValueError, match="inning_topbot"):
             apply_filters(df, SplitFilters(home_away="home"))
+
+    def test_pitcher_home_keeps_top_half(self):
+        result = apply_filters(_make_full_df(), SplitFilters(home_away="home"), player_type="Pitcher")
+        assert result["inning"].tolist() == [1, 3, 6]
+
+    def test_pitcher_away_keeps_bot_half(self):
+        result = apply_filters(_make_full_df(), SplitFilters(home_away="away"), player_type="Pitcher")
+        assert result["inning"].tolist() == [2, 4, 5]
 
 
 # ===========================================================================

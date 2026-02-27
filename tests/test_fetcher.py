@@ -6,9 +6,12 @@ import pytest
 
 from data.fetcher import (
     CORE_STAT_COLS,
+    PITCHER_KEEP_COLS,
     STATCAST_KEEP_COLS,
     _fetch_batting_stats,
+    _fetch_pitching_stats,
     _fetch_statcast_batter,
+    _fetch_statcast_pitcher,
     _lookup_player,
     get_player_row,
     assert_core_stats_present,
@@ -163,6 +166,109 @@ class TestFetchStatcastBatter:
         mock_statcast.return_value = sparse_df
         df = _fetch_statcast_batter(660271, 2024)
         assert list(df.columns) == ["game_date", "batter", "launch_speed"]
+
+
+# ---------------------------------------------------------------------------
+# _fetch_pitching_stats
+# ---------------------------------------------------------------------------
+
+class TestFetchPitchingStats:
+    @patch("data.fetcher.pb.pitching_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_returns_dataframe(self, mock_cache, mock_pitching):
+        mock_pitching.return_value = _make_batting_df()
+        df = _fetch_pitching_stats(2024)
+        assert isinstance(df, pd.DataFrame)
+
+    @patch("data.fetcher.pb.pitching_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_calls_pybaseball_with_correct_season(self, mock_cache, mock_pitching):
+        mock_pitching.return_value = _make_batting_df()
+        _fetch_pitching_stats(2023, min_ip=100)
+        mock_pitching.assert_called_once_with(2023, qual=100)
+
+    @patch("data.fetcher.pb.pitching_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_default_min_ip_is_20(self, mock_cache, mock_pitching):
+        mock_pitching.return_value = _make_batting_df()
+        _fetch_pitching_stats(2024)
+        mock_pitching.assert_called_once_with(2024, qual=20)
+
+    @patch("data.fetcher._last_completed_season_year", return_value=2025)
+    @patch("data.fetcher.pb.pitching_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_fetch_pitching_stats_future_season_returns_empty(self, mock_cache, mock_pitching, _mock_last):
+        df = _fetch_pitching_stats(2026)
+        assert df.empty
+        assert "warning" in df.attrs
+        mock_pitching.assert_not_called()
+        mock_cache.assert_not_called()
+
+    @patch("data.fetcher._last_completed_season_year", return_value=2025)
+    @patch("data.fetcher.pb.pitching_stats", side_effect=ValueError("parse error"))
+    @patch("data.fetcher.pb.cache.enable")
+    def test_pybaseball_error_returns_empty_with_warning(self, mock_cache, mock_pitching, _mock_last):
+        df = _fetch_pitching_stats(2025)
+        assert df.empty
+        assert "warning" in df.attrs
+        mock_cache.assert_called_once()
+        mock_pitching.assert_called_once_with(2025, qual=20)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_statcast_pitcher
+# ---------------------------------------------------------------------------
+
+class TestFetchStatcastPitcher:
+    def test_pitcher_keep_cols_is_superset(self):
+        for col in STATCAST_KEEP_COLS:
+            assert col in PITCHER_KEEP_COLS
+        for col in ["pitch_type", "release_speed", "release_spin_rate", "bb_type"]:
+            assert col in PITCHER_KEEP_COLS
+
+    @patch("data.fetcher.pb.statcast_pitcher")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_returns_dataframe(self, mock_cache, mock_statcast):
+        mock_statcast.return_value = _make_statcast_df()
+        df = _fetch_statcast_pitcher(123456, 2024)
+        assert isinstance(df, pd.DataFrame)
+
+    @patch("data.fetcher.pb.statcast_pitcher")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_date_range_covers_full_season(self, mock_cache, mock_statcast):
+        mock_statcast.return_value = _make_statcast_df()
+        _fetch_statcast_pitcher(123456, 2024)
+        mock_statcast.assert_called_once_with("2024-03-01", "2024-11-30", 123456)
+
+    @patch("data.fetcher.pb.statcast_pitcher")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_only_keep_cols_returned(self, mock_cache, mock_statcast):
+        full_df = _make_statcast_df()
+        full_df["irrelevant_col"] = "noise"
+        mock_statcast.return_value = full_df
+        df = _fetch_statcast_pitcher(123456, 2024)
+        assert "irrelevant_col" not in df.columns
+
+    @patch("data.fetcher.pb.statcast_pitcher")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_fetch_statcast_pitcher_keeps_expected_cols(self, mock_cache, mock_statcast):
+        full_df = _make_statcast_df()
+        full_df["pitch_type"] = "FF"
+        full_df["release_speed"] = 96.1
+        full_df["release_spin_rate"] = 2350.0
+        full_df["bb_type"] = "fly_ball"
+        mock_statcast.return_value = full_df
+        df = _fetch_statcast_pitcher(123456, 2024)
+        for col in ["pitch_type", "release_speed", "release_spin_rate", "bb_type"]:
+            assert col in df.columns
+
+    @patch("data.fetcher.pb.statcast_pitcher")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_missing_statcast_cols_handled_gracefully(self, mock_cache, mock_statcast):
+        sparse_df = _make_statcast_df()[["game_date", "pitcher", "launch_speed"]]
+        mock_statcast.return_value = sparse_df
+        df = _fetch_statcast_pitcher(123456, 2024)
+        assert list(df.columns) == ["game_date", "pitcher", "launch_speed"]
 
 
 # ---------------------------------------------------------------------------

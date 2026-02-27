@@ -34,7 +34,14 @@ STATCAST_KEEP_COLS = [
     "balls",             # ball count at time of pitch (0–3)
     "strikes",           # strike count at time of pitch (0–2)
 ]
+PITCHER_KEEP_COLS = STATCAST_KEEP_COLS + [
+    "pitch_type",
+    "release_speed",
+    "release_spin_rate",
+    "bb_type",
+]
 _BATTING_BASE_COLS = ["IDfg", "Name", "Team", "PA", "Season"]
+_PITCHING_BASE_COLS = ["IDfg", "Name", "Team", "TBF", "Season"]
 
 
 def _last_completed_season_year() -> int:
@@ -44,6 +51,15 @@ def _last_completed_season_year() -> int:
 
 def _empty_batting_stats_df(season: int, reason: str | None = None) -> pd.DataFrame:
     cols = _BATTING_BASE_COLS + CORE_STAT_COLS
+    df = pd.DataFrame(columns=cols)
+    df.attrs["season"] = int(season)
+    if reason:
+        df.attrs["warning"] = reason
+    return df
+
+
+def _empty_pitching_stats_df(season: int, reason: str | None = None) -> pd.DataFrame:
+    cols = _PITCHING_BASE_COLS + CORE_STAT_COLS
     df = pd.DataFrame(columns=cols)
     df.attrs["season"] = int(season)
     if reason:
@@ -85,6 +101,35 @@ def _fetch_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     return df[cols].copy()
 
 
+def _fetch_pitching_stats(season: int, min_ip: int = 20) -> pd.DataFrame:
+    """Return FanGraphs season pitching stats for all qualified pitchers."""
+    season_int = int(season)
+    if season_int > _last_completed_season_year():
+        return _empty_pitching_stats_df(
+            season_int,
+            reason=f"No pitching stats available for {season_int} yet.",
+        )
+
+    pb.cache.enable()
+    try:
+        return pb.pitching_stats(season_int, qual=min_ip)
+    except Exception:
+        return _empty_pitching_stats_df(
+            season_int,
+            reason=f"No pitching stats available for {season_int} yet.",
+        )
+
+
+def _fetch_statcast_pitcher(player_mlbam_id: int, season: int) -> pd.DataFrame:
+    """Return raw Statcast pitch-level events for one pitcher for a full season."""
+    pb.cache.enable()
+    start = f"{season}-03-01"
+    end = f"{season}-11-30"
+    df = pb.statcast_pitcher(start, end, player_mlbam_id)
+    cols = [c for c in PITCHER_KEEP_COLS if c in df.columns]
+    return df[cols].copy()
+
+
 def _lookup_player(last_name: str, first_name: str = "") -> pd.DataFrame:
     """Return player ID table from pybaseball name lookup."""
     return pb.playerid_lookup(last_name, first_name)
@@ -104,6 +149,18 @@ def get_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
 def get_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     """Cached raw Statcast events for one batter."""
     return _fetch_statcast_batter(player_mlbam_id, season)
+
+
+@st.cache_data(ttl=_TTL_STATS, show_spinner=False)
+def get_pitching_stats(season: int, min_ip: int = 20) -> pd.DataFrame:
+    """Cached FanGraphs season pitching stats."""
+    return _fetch_pitching_stats(season, min_ip)
+
+
+@st.cache_data(ttl=_TTL_STATS, show_spinner=False)
+def get_statcast_pitcher(player_mlbam_id: int, season: int) -> pd.DataFrame:
+    """Cached raw Statcast events for one pitcher."""
+    return _fetch_statcast_pitcher(player_mlbam_id, season)
 
 
 @st.cache_data(ttl=_TTL_IDS, show_spinner=False)
