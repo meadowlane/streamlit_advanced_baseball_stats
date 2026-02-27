@@ -21,6 +21,9 @@ import pandas as pd
 
 # Stats where a LOWER value is better (percentile is inverted)
 LOWER_IS_BETTER: frozenset[str] = frozenset(["K%"])
+PITCHER_LOWER_IS_BETTER: frozenset[str] = frozenset(
+    ["wOBA", "xwOBA", "BB%", "HardHit%", "Barrel%"]
+)
 
 # FanGraphs stores these as proportions (0–1); splits.py outputs them as
 # percentages (0–100). We convert distributions to the percentage scale so
@@ -28,6 +31,24 @@ LOWER_IS_BETTER: frozenset[str] = frozenset(["K%"])
 PROPORTION_STATS: frozenset[str] = frozenset(["K%", "BB%", "HardHit%", "Barrel%"])
 
 CORE_STATS: list[str] = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+
+PITCHER_PROPORTION_STATS: frozenset[str] = frozenset(
+    {"K%", "BB%", "K-BB%", "GB%", "HardHit%", "Barrel%", "CSW%", "FirstStrike%"}
+)
+FG_PITCHER_COLUMN_MAP: dict[str, str] = {"F-Strike%": "FirstStrike%"}
+PITCHER_DISTRIBUTION_STATS: list[str] = [
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "K-BB%",
+    "HardHit%",
+    "Barrel%",
+    "GB%",
+    "CSW%",
+    "FirstStrike%",
+]
+PITCHER_MIN_DISTRIBUTION_SAMPLE: int = 10
 
 # Color tiers (mirrors Baseball Savant convention).
 # List of (min_percentile_inclusive, name, hex).  Evaluated top-down.
@@ -58,6 +79,28 @@ def build_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]
         if stat in PROPORTION_STATS:
             values = values * 100.0
         distributions[stat] = values
+    return distributions
+
+
+def build_pitcher_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Return per-stat arrays of qualified pitchers for percentile distributions."""
+    distributions: dict[str, np.ndarray] = {}
+    inverse_fg_map = {internal: fg for fg, internal in FG_PITCHER_COLUMN_MAP.items()}
+
+    for internal_stat in PITCHER_DISTRIBUTION_STATS:
+        fg_col = inverse_fg_map.get(internal_stat, internal_stat)
+        if fg_col not in season_df.columns:
+            continue
+
+        values = season_df[fg_col].dropna().to_numpy(dtype=float)
+        if len(values) < PITCHER_MIN_DISTRIBUTION_SAMPLE:
+            continue
+
+        if internal_stat in PITCHER_PROPORTION_STATS:
+            values = values * 100.0
+
+        distributions[internal_stat] = values
+
     return distributions
 
 
@@ -101,14 +144,25 @@ def get_percentile(stat: str, value: float, distributions: dict[str, np.ndarray]
 def get_all_percentiles(
     player_stats: dict[str, float | None],
     distributions: dict[str, np.ndarray],
+    player_type: str = "Batter",
 ) -> dict[str, float]:
     """Return {stat: percentile} for every stat in *player_stats*.
 
     Stats missing from distributions or with None/NaN values get np.nan.
     """
+    lower_is_better = (
+        PITCHER_LOWER_IS_BETTER
+        if str(player_type).strip().lower() == "pitcher"
+        else LOWER_IS_BETTER
+    )
+
     return {
-        stat: get_percentile(stat, value, distributions)  # type: ignore[arg-type]
-        if value is not None
+        stat: compute_percentile(
+            value,
+            distributions[stat],
+            higher_is_better=(stat not in lower_is_better),
+        )
+        if (value is not None and stat in distributions)
         else np.nan
         for stat, value in player_stats.items()
     }

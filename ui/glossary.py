@@ -59,6 +59,52 @@ STAT_DEFINITIONS: dict[str, dict[str, str]] = {
         "context": "Excellent: >14% · Above avg: >10% · Average: ~8.5% · Below avg: <6%",
         "direction": "Higher is better",
     },
+    "K-BB%": {
+        "full_name": "Strikeout Minus Walk Rate",
+        "definition": (
+            "A quick pitcher command/dominance indicator computed as strikeout rate "
+            "minus walk rate (K% - BB%). It captures how often a pitcher gets outs "
+            "via strikeout while avoiding free passes."
+        ),
+        "context": "Higher is better for pitchers; strong starters are often in low-to-mid teens or better.",
+        "direction": "Higher is better",
+    },
+    "GB%": {
+        "full_name": "Ground-Ball Rate",
+        "definition": (
+            "For pitchers, the share of batted balls allowed that are ground balls. "
+            "Denominator: all tracked balls in play for the selected sample."
+        ),
+        "context": "Typical MLB pitcher range is roughly 40–48%; 50%+ is strong.",
+        "direction": "Higher is better (for pitchers)",
+    },
+    "CSW%": {
+        "full_name": "Called Strikes Plus Whiffs",
+        "definition": (
+            "The percentage of all pitches that end as a called strike or a swing-and-miss. "
+            "Denominator: total pitches in the selected sample."
+        ),
+        "context": "Around 28–30% is solid; low-30s is often excellent.",
+        "direction": "Higher is better (for pitchers)",
+    },
+    "Whiff%": {
+        "full_name": "Whiff Rate",
+        "definition": (
+            "How often a pitcher gets a swing-and-miss when hitters swing. "
+            "Denominator: swings (not all pitches)."
+        ),
+        "context": "About 25–30% is good; 35%+ is typically elite.",
+        "direction": "Higher is better (for pitchers)",
+    },
+    "FirstStrike%": {
+        "full_name": "First-Pitch Strike Rate",
+        "definition": (
+            "The share of 0-0 pitches that are strikes by called strike/whiff classification. "
+            "Denominator: pitches thrown in 0 balls, 0 strikes counts."
+        ),
+        "context": "League average is often near 60%; mid-60s is strong.",
+        "direction": "Higher is better (for pitchers)",
+    },
     "HardHit%": {
         "full_name": "Hard Hit Rate",
         "definition": (

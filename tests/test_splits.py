@@ -5,18 +5,26 @@ import numpy as np
 import pytest
 
 from stats.splits import (
+    _compute_all_pitcher_stats,
     _pa_events,
     _compute_stats,
+    _compute_gb_rate,
+    _compute_pitch_level_stats,
     _compute_woba,
     BATTED_BALL_EVENTS,
     STAT_REGISTRY,
     StatSpec,
     get_sample_sizes,
+    split_by_batter_hand,
     split_by_hand,
+    split_home_away_pitcher,
     split_home_away,
+    split_by_month_pitcher,
     split_by_month,
+    get_pitcher_splits,
     get_splits,
     get_trend_stats,
+    PITCHER_SPLIT_COLS,
     SPLIT_COLS,
     PA_EVENTS,
     BARREL_CODE,
@@ -31,6 +39,7 @@ from stats.filters import SplitFilters, prepare_df
 def _make_df(
     n: int = 30,
     p_throws: str | list = "R",
+    stand: str | list = "R",
     inning_topbot: str | list = "Bot",
     month: int | list = 4,
 ) -> pd.DataFrame:
@@ -74,10 +83,18 @@ def _make_df(
                 f"2024-0{m}-01" for m in _expand(month, n)
             ],
             "p_throws": _expand(p_throws, n),
+            "stand": _expand(stand, n),
             "inning_topbot": _expand(inning_topbot, n),
             "events": events,
+            "description": ["called_strike"] * n,
+            "balls": [0] * n,
+            "strikes": [0] * n,
             "launch_speed": launch_speeds,
             "launch_speed_angle": [float(x) for x in launch_speed_angles],
+            "bb_type": [
+                "ground_ball" if e in {"single", "double", "triple", "home_run", "field_out"} else np.nan
+                for e in events
+            ],
             "estimated_woba_using_speedangle": [
                 0.500 if e in {"single", "double", "triple", "home_run"} else
                 (0.050 if e == "field_out" else np.nan)
@@ -91,7 +108,8 @@ def _empty_df() -> pd.DataFrame:
     """A DataFrame with the right schema but zero rows."""
     return pd.DataFrame(
         columns=[
-            "game_date", "p_throws", "inning_topbot", "events",
+            "game_date", "p_throws", "stand", "inning_topbot", "events",
+            "description", "balls", "strikes", "bb_type",
             "launch_speed", "launch_speed_angle",
             "estimated_woba_using_speedangle",
         ]
@@ -128,7 +146,7 @@ class TestPaEvents:
 class TestComputeStats:
     def test_returns_all_keys(self):
         stats = _compute_stats(_make_df())
-        expected_keys = {"PA", "K%", "BB%", "HardHit%", "Barrel%", "xwOBA", "wOBA"}
+        expected_keys = {"PA", "K%", "BB%", "HardHit%", "Barrel%", "GB%", "xwOBA", "wOBA"}
         assert expected_keys == set(stats.keys())
 
     def test_pa_count_correct(self):
@@ -163,7 +181,7 @@ class TestComputeStats:
     def test_empty_df_returns_all_none(self):
         stats = _compute_stats(_empty_df())
         assert stats["PA"] == 0
-        for key in ["K%", "BB%", "HardHit%", "Barrel%", "xwOBA", "wOBA"]:
+        for key in ["K%", "BB%", "HardHit%", "Barrel%", "GB%", "xwOBA", "wOBA"]:
             assert stats[key] is None
 
     def test_missing_launch_speed_angle_column(self):
@@ -178,6 +196,83 @@ class TestComputeStats:
         df = df.drop(columns=["estimated_woba_using_speedangle"])
         stats = _compute_stats(df)
         assert stats["xwOBA"] is None
+
+    def test_gb_none_when_bb_type_missing(self):
+        df = _make_df(20).drop(columns=["bb_type"])
+        stats = _compute_stats(df)
+        assert stats["GB%"] is None
+
+
+class TestComputeGbRate:
+    def test_gb_percent_correct(self):
+        pa = pd.DataFrame({"events": ["single", "field_out", "walk"]})
+        bb_df = pd.DataFrame({"bb_type": ["ground_ball", "fly_ball"]})
+        gb = _compute_gb_rate(pa, bb_df, 3)
+        assert gb == pytest.approx(50.0, abs=0.1)
+
+    def test_gb_percent_none_when_bb_type_missing(self):
+        pa = pd.DataFrame({"events": ["single", "field_out"]})
+        bb_df = pd.DataFrame({"launch_speed": [90.0, 95.0]})
+        assert _compute_gb_rate(pa, bb_df, 2) is None
+
+    def test_gb_percent_none_when_no_bip(self):
+        pa = pd.DataFrame({"events": ["walk", "strikeout"]})
+        bb_df = pd.DataFrame(columns=["bb_type"])
+        assert _compute_gb_rate(pa, bb_df, 2) is None
+
+
+class TestComputePitchLevelStats:
+    def test_csw_correct(self):
+        df = pd.DataFrame(
+            {
+                "description": ["called_strike", "ball", "foul_tip", "in_play"],
+                "balls": [0, 0, 0, 1],
+                "strikes": [0, 1, 2, 1],
+            }
+        )
+        stats = _compute_pitch_level_stats(df)
+        assert stats["CSW%"] == pytest.approx(50.0, abs=0.1)
+
+    def test_whiff_none_on_zero_swings(self):
+        df = pd.DataFrame(
+            {
+                "description": ["called_strike", "ball", "blocked_ball"],
+                "balls": [0, 1, 2],
+                "strikes": [0, 0, 1],
+            }
+        )
+        stats = _compute_pitch_level_stats(df)
+        assert stats["Whiff%"] is None
+
+    def test_first_strike_correct(self):
+        df = pd.DataFrame(
+            {
+                "description": ["called_strike", "ball", "foul_tip", "ball"],
+                "balls": [0, 0, 1, 1],
+                "strikes": [0, 0, 1, 2],
+            }
+        )
+        stats = _compute_pitch_level_stats(df)
+        assert stats["FirstStrike%"] == pytest.approx(50.0, abs=0.1)
+
+    def test_first_strike_none_if_no_zero_zero_rows(self):
+        df = pd.DataFrame(
+            {
+                "description": ["called_strike", "swinging_strike"],
+                "balls": [1, 2],
+                "strikes": [1, 2],
+            }
+        )
+        stats = _compute_pitch_level_stats(df)
+        assert stats["FirstStrike%"] is None
+
+
+class TestPitcherDerivedStats:
+    def test_k_minus_bb_equals_k_minus_bb(self):
+        stats = _compute_all_pitcher_stats(_make_df(30))
+        assert stats["K%"] is not None
+        assert stats["BB%"] is not None
+        assert stats["K-BB%"] == pytest.approx(stats["K%"] - stats["BB%"], abs=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +310,9 @@ class TestComputeWoba:
 # ---------------------------------------------------------------------------
 
 class TestStatRegistry:
-    def test_registry_has_current_six_stats(self):
+    def test_registry_has_current_seven_stats(self):
         assert set(STAT_REGISTRY.keys()) == {
-            "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"
+            "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%", "GB%"
         }
         assert all(isinstance(spec, StatSpec) for spec in STAT_REGISTRY.values())
 
@@ -379,6 +474,42 @@ class TestGetSplits:
             get_splits(_make_df(), "invalid")
 
 
+class TestPitcherSplits:
+    def test_split_by_batter_hand_uses_stand_and_labels(self):
+        df = _make_df(30, p_throws="R", stand=["L"] * 12 + ["R"] * 18)
+        result = split_by_batter_hand(df)
+        assert set(result["Split"]) == {"vs LHB", "vs RHB"}
+        assert "CSW%" in result.columns
+        assert "Whiff%" in result.columns
+        assert "FirstStrike%" in result.columns
+        assert list(result.columns) == PITCHER_SPLIT_COLS
+        lhb = result[result["Split"] == "vs LHB"].iloc[0]
+        rhb = result[result["Split"] == "vs RHB"].iloc[0]
+        assert lhb["PA"] == 12
+        assert rhb["PA"] == 18
+
+    def test_split_home_away_pitcher_mapping_correct(self):
+        topbot = ["Top"] * 11 + ["Bot"] * 19
+        df = _make_df(30, inning_topbot=topbot, stand="R")
+        result = split_home_away_pitcher(df)
+        home = result[result["Split"] == "Home"].iloc[0]
+        away = result[result["Split"] == "Away"].iloc[0]
+        assert home["PA"] == 11
+        assert away["PA"] == 19
+        assert "CSW%" in result.columns
+        assert "Whiff%" in result.columns
+        assert "FirstStrike%" in result.columns
+
+    def test_get_pitcher_splits_dispatch(self):
+        df = _make_df(30, stand=["L", "R"])
+        hand = get_pitcher_splits(df, "hand")
+        home_away = get_pitcher_splits(df, "home_away")
+        monthly = get_pitcher_splits(df, "monthly")
+        assert set(hand["Split"]) == {"vs LHB", "vs RHB"}
+        assert set(home_away["Split"]) == {"Home", "Away"}
+        assert "April" in set(monthly["Split"])
+
+
 # ---------------------------------------------------------------------------
 # get_trend_stats
 # ---------------------------------------------------------------------------
@@ -386,7 +517,7 @@ class TestGetSplits:
 class TestGetTrendStats:
     """Tests for get_trend_stats — uses injected fetch_fn stubs."""
 
-    _STAT_KEYS = {"PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"}
+    _STAT_KEYS = {"PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%", "GB%"}
 
     def _stub(self, df: "pd.DataFrame"):
         """Return a fetch_fn that always returns the given DataFrame."""
@@ -435,7 +566,7 @@ class TestGetTrendStats:
         assert len(result) == 1
         row = result[0]
         assert row["PA"] == 0
-        for stat in ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]:
+        for stat in ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%", "GB%"]:
             assert row[stat] is None, f"Expected {stat} to be None for empty df"
 
     def test_empty_seasons_list_returns_empty(self):

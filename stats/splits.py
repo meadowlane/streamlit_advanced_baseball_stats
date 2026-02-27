@@ -74,8 +74,55 @@ HARD_HIT_MPH = 95
 # K events used for K% computation
 K_EVENTS = frozenset(["strikeout", "strikeout_double_play"])
 
+# Pitch-level descriptions used for pitcher-only metrics.
+CSW_DESCRIPTIONS = frozenset(
+    ["called_strike", "swinging_strike", "swinging_strike_blocked", "foul_tip"]
+)
+WHIFF_DESCRIPTIONS = frozenset(["swinging_strike", "swinging_strike_blocked"])
+SWING_DESCRIPTIONS = frozenset(
+    [
+        "swinging_strike",
+        "swinging_strike_blocked",
+        "foul",
+        "foul_tip",
+        "foul_bunt",
+        "hit_into_play",
+        "hit_into_play_no_out",
+        "hit_into_play_score",
+        "swinging_pitchout",
+        "foul_pitchout",
+        "missed_bunt",
+    ]
+)
+# Per plan, FirstStrike% uses the same strike-classification set as CSW%.
+FIRST_STRIKE_DESCRIPTIONS = CSW_DESCRIPTIONS
+
+# Pitch type display labels used in the pitcher arsenal table.
+PITCH_TYPE_NAMES: dict[str, str] = {
+    "FA": "Fastball",
+    "FF": "Four-Seam Fastball",
+    "FT": "Two-Seam Fastball",
+    "SI": "Sinker",
+    "FC": "Cutter",
+    "FS": "Splitter",
+    "FO": "Forkball",
+    "CH": "Changeup",
+    "SC": "Screwball",
+    "SL": "Slider",
+    "ST": "Sweeper",
+    "SV": "Slurve",
+    "CU": "Curveball",
+    "KC": "Knuckle Curve",
+    "CS": "Slow Curve",
+    "KN": "Knuckleball",
+    "EP": "Eephus",
+}
+MIN_ARSENAL_PITCHES = 25
+
 # Ordered output columns
-SPLIT_COLS = ["Split", "PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+SPLIT_COLS = ["Split", "PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%", "GB%"]
+PITCHER_SPLIT_COLS = SPLIT_COLS + ["K-BB%", "CSW%", "Whiff%", "FirstStrike%"]
+ARSENAL_COLS = ["Pitch", "N", "Usage%", "Velo", "Spin", "CSW%", "Whiff%"]
 
 MONTH_NAMES = {
     3: "March/April",  # Spring Training overlap sometimes puts March games here
@@ -162,6 +209,23 @@ def _compute_barrel_rate(_pa: pd.DataFrame, bb_df: pd.DataFrame, _n_pa: int) -> 
     return (bb_df["launch_speed_angle"] == BARREL_CODE).sum() / n_bb_events
 
 
+def _compute_gb_rate(_pa: pd.DataFrame, bb_df: pd.DataFrame, _n_pa: int) -> float | None:
+    """Return ground-ball rate as a percent of batted-ball events (0-100)."""
+    n_bb_events = len(bb_df)
+    if n_bb_events == 0 or "bb_type" not in bb_df.columns:
+        return None
+    gb = (bb_df["bb_type"] == "ground_ball").sum()
+    return (gb / n_bb_events) * 100.0
+
+
+def _compute_gb_rate_fraction(pa: pd.DataFrame, bb_df: pd.DataFrame, n_pa: int) -> float | None:
+    """Return ground-ball rate as a 0-1 fraction for pct formatter reuse."""
+    gb_rate = _compute_gb_rate(pa, bb_df, n_pa)
+    if gb_rate is None:
+        return None
+    return gb_rate / 100.0
+
+
 def _compute_xwoba_value(pa: pd.DataFrame, _bb_df: pd.DataFrame, _n_pa: int) -> float | None:
     xwoba_col = "estimated_woba_using_speedangle"
     if xwoba_col not in pa.columns:
@@ -223,6 +287,14 @@ STAT_REGISTRY: dict[str, StatSpec] = {
         compute_fn=_compute_barrel_rate,
         glossary_key="Barrel%",
     ),
+    "GB%": StatSpec(
+        key="GB%",
+        label="GB%",
+        required_cols=["events", "launch_speed"],
+        formatter="pct_1",
+        compute_fn=_compute_gb_rate_fraction,
+        glossary_key=None,
+    ),
 }
 
 
@@ -234,7 +306,14 @@ def _format_stat_value(value: float | None, formatter: Literal["pct_1", "decimal
     return round(value, 3)
 
 
-def _compute_stats(df: pd.DataFrame) -> dict:
+def get_stat_registry(player_type: str) -> dict[str, StatSpec]:
+    """Return the active stat registry for the requested player type."""
+    if str(player_type).strip().lower() == "pitcher":
+        return STAT_REGISTRY
+    return STAT_REGISTRY
+
+
+def _compute_stats(df: pd.DataFrame, player_type: str = "Batter") -> dict:
     """Compute all 6 core stats from a raw Statcast subset.
 
     Accepts all pitches for the subset; filters internally to PA events.
@@ -243,17 +322,117 @@ def _compute_stats(df: pd.DataFrame) -> dict:
     pa = _pa_events(df)
     n_pa = len(pa)
 
+    stat_registry = get_stat_registry(player_type)
+
     if n_pa == 0:
-        return {"PA": 0, **{key: None for key in STAT_REGISTRY}}
+        return {"PA": 0, **{key: None for key in stat_registry}}
 
     bb_df = _batted_ball_events(pa)
     stats: dict[str, float | int | None] = {"PA": n_pa}
 
-    for key, spec in STAT_REGISTRY.items():
+    for key, spec in stat_registry.items():
         raw_value = spec.compute_fn(pa, bb_df, n_pa)
         stats[key] = _format_stat_value(raw_value, spec.formatter)
 
     return stats
+
+
+def _compute_pitch_level_stats(df_all_pitches: pd.DataFrame) -> dict[str, float | None]:
+    """Compute pitcher-only pitch-level metrics from all pitch rows."""
+    if df_all_pitches.empty or "description" not in df_all_pitches.columns:
+        return {"CSW%": None, "Whiff%": None, "FirstStrike%": None}
+
+    descriptions = df_all_pitches["description"]
+    n_pitches = len(df_all_pitches)
+    if n_pitches == 0:
+        return {"CSW%": None, "Whiff%": None, "FirstStrike%": None}
+
+    csw = descriptions.isin(CSW_DESCRIPTIONS).sum()
+    csw_rate = round((csw / n_pitches) * 100.0, 1)
+
+    swings = descriptions.isin(SWING_DESCRIPTIONS).sum()
+    whiffs = descriptions.isin(WHIFF_DESCRIPTIONS).sum()
+    whiff_rate = round((whiffs / swings) * 100.0, 1) if swings > 0 else None
+
+    if "balls" not in df_all_pitches.columns or "strikes" not in df_all_pitches.columns:
+        first_strike_rate = None
+    else:
+        first_pitch = df_all_pitches[
+            (df_all_pitches["balls"] == 0) & (df_all_pitches["strikes"] == 0)
+        ]
+        if first_pitch.empty:
+            first_strike_rate = None
+        else:
+            first_strikes = first_pitch["description"].isin(FIRST_STRIKE_DESCRIPTIONS).sum()
+            first_strike_rate = round((first_strikes / len(first_pitch)) * 100.0, 1)
+
+    return {"CSW%": csw_rate, "Whiff%": whiff_rate, "FirstStrike%": first_strike_rate}
+
+
+def _compute_all_pitcher_stats(df: pd.DataFrame) -> dict[str, float | int | None]:
+    """Return the union of PA-level and pitch-level pitcher metrics."""
+    base = _compute_stats(df, player_type="Pitcher")
+    k_pct = base.get("K%")
+    bb_pct = base.get("BB%")
+    k_minus_bb = None
+    if k_pct is not None and bb_pct is not None:
+        k_minus_bb = round(float(k_pct) - float(bb_pct), 1)
+    return {**base, "K-BB%": k_minus_bb, **_compute_pitch_level_stats(df)}
+
+
+def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
+    """Return per-pitch-type arsenal metrics for a pitcher-season data subset.
+
+    Requires ``pitch_type`` and ``description`` columns. Returns an empty
+    DataFrame when either column is unavailable or no pitch types meet the
+    minimum sample threshold.
+    """
+    if "pitch_type" not in df.columns or "description" not in df.columns:
+        return pd.DataFrame(columns=ARSENAL_COLS)
+
+    work = df[df["pitch_type"].notna() & (df["pitch_type"] != "UN")].copy()
+    if work.empty:
+        return pd.DataFrame(columns=ARSENAL_COLS)
+
+    rows: list[dict[str, float | int | str | None]] = []
+    for pitch_type, grp in work.groupby("pitch_type", sort=False):
+        n_pitches = int(len(grp))
+        if n_pitches < MIN_ARSENAL_PITCHES:
+            continue
+
+        descriptions = grp["description"]
+        csw = int(descriptions.isin(CSW_DESCRIPTIONS).sum())
+        csw_pct = round((csw / n_pitches) * 100.0, 1)
+
+        swings = int(descriptions.isin(SWING_DESCRIPTIONS).sum())
+        whiffs = int(descriptions.isin(WHIFF_DESCRIPTIONS).sum())
+        whiff_pct: float | None = None
+        if swings > 0:
+            whiff_pct = round((whiffs / swings) * 100.0, 1)
+
+        velo = grp["release_speed"].mean() if "release_speed" in grp.columns else float("nan")
+        spin = grp["release_spin_rate"].mean() if "release_spin_rate" in grp.columns else float("nan")
+
+        rows.append(
+            {
+                "pitch_type": str(pitch_type),
+                "Pitch": PITCH_TYPE_NAMES.get(str(pitch_type), str(pitch_type)),
+                "N": n_pitches,
+                "Velo": velo,
+                "Spin": spin,
+                "CSW%": csw_pct,
+                "Whiff%": whiff_pct,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=ARSENAL_COLS)
+
+    arsenal = pd.DataFrame(rows)
+    total = float(arsenal["N"].sum())
+    arsenal["Usage%"] = round((arsenal["N"] / total) * 100.0, 1)
+    arsenal = arsenal.sort_values(by="Usage%", ascending=False, kind="stable")
+    return arsenal[ARSENAL_COLS].reset_index(drop=True)
 
 
 def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:
@@ -293,7 +472,7 @@ def split_by_hand(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for hand, label in [("R", "vs RHP"), ("L", "vs LHP")]:
         subset = df[df["p_throws"] == hand]
-        stats = _compute_stats(subset)
+        stats = _compute_stats(subset, player_type="Batter")
         rows.append({"Split": label, **stats})
     return pd.DataFrame(rows)[SPLIT_COLS]
 
@@ -308,7 +487,7 @@ def split_home_away(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for topbot, label in [("Bot", "Home"), ("Top", "Away")]:
         subset = df[df["inning_topbot"] == topbot]
-        stats = _compute_stats(subset)
+        stats = _compute_stats(subset, player_type="Batter")
         rows.append({"Split": label, **stats})
     return pd.DataFrame(rows)[SPLIT_COLS]
 
@@ -324,7 +503,7 @@ def split_by_month(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for month_num in sorted(df["_month"].dropna().unique()):
         subset = df[df["_month"] == month_num]
-        stats = _compute_stats(subset)
+        stats = _compute_stats(subset, player_type="Batter")
         if stats["PA"] == 0:
             continue
         label = MONTH_NAMES.get(int(month_num), f"Month {int(month_num)}")
@@ -345,6 +524,55 @@ def get_splits(df: pd.DataFrame, split_type: str) -> pd.DataFrame:
         "hand": split_by_hand,
         "home_away": split_home_away,
         "monthly": split_by_month,
+    }
+    if split_type not in dispatch:
+        raise ValueError(f"Unknown split_type {split_type!r}. Choose from: {list(dispatch)}")
+    return dispatch[split_type](df)
+
+
+def split_by_batter_hand(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a 2-row DataFrame: vs LHB and vs RHB splits."""
+    rows = []
+    for hand, label in [("L", "vs LHB"), ("R", "vs RHB")]:
+        subset = df[df["stand"] == hand]
+        stats = _compute_all_pitcher_stats(subset)
+        rows.append({"Split": label, **stats})
+    return pd.DataFrame(rows)[PITCHER_SPLIT_COLS]
+
+
+def split_home_away_pitcher(df: pd.DataFrame) -> pd.DataFrame:
+    """Return pitcher home/away splits with inverted top/bottom mapping."""
+    rows = []
+    for topbot, label in [("Top", "Home"), ("Bot", "Away")]:
+        subset = df[df["inning_topbot"] == topbot]
+        stats = _compute_all_pitcher_stats(subset)
+        rows.append({"Split": label, **stats})
+    return pd.DataFrame(rows)[PITCHER_SPLIT_COLS]
+
+
+def split_by_month_pitcher(df: pd.DataFrame) -> pd.DataFrame:
+    """Return one row per month using pitcher-oriented stat computation."""
+    df = df.copy()
+    df["_month"] = pd.to_datetime(df["game_date"]).dt.month
+
+    rows = []
+    for month_num in sorted(df["_month"].dropna().unique()):
+        subset = df[df["_month"] == month_num]
+        stats = _compute_all_pitcher_stats(subset)
+        if stats["PA"] == 0:
+            continue
+        label = MONTH_NAMES.get(int(month_num), f"Month {int(month_num)}")
+        rows.append({"Split": label, **stats})
+
+    return pd.DataFrame(rows)[PITCHER_SPLIT_COLS] if rows else pd.DataFrame(columns=PITCHER_SPLIT_COLS)
+
+
+def get_pitcher_splits(df: pd.DataFrame, split_type: str) -> pd.DataFrame:
+    """Dispatch to the correct pitcher split function by name."""
+    dispatch = {
+        "hand": split_by_batter_hand,
+        "home_away": split_home_away_pitcher,
+        "monthly": split_by_month_pitcher,
     }
     if split_type not in dispatch:
         raise ValueError(f"Unknown split_type {split_type!r}. Choose from: {list(dispatch)}")
@@ -401,8 +629,8 @@ def get_trend_stats(
         raw_df = fetch_fn(mlbam_id, season)
         cache_key = (int(mlbam_id), int(season), str(player_type))
         prepared = get_prepared_df_cached(raw_df, prepare_cache, cache_key)
-        filtered = apply_filters(prepared, filters)
-        stats = _compute_stats(filtered)
+        filtered = apply_filters(prepared, filters, pitcher_perspective=(player_type == "Pitcher"))
+        stats = _compute_stats(filtered, player_type=player_type)
         sample_sizes = get_sample_sizes(filtered)
         stats["season"] = season
         stats["n_pitches"] = sample_sizes.get("N_pitches")

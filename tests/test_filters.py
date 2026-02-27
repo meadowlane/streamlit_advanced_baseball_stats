@@ -87,9 +87,9 @@ class TestFilterSpec:
 # ===========================================================================
 
 class TestFilterRegistry:
-    def test_all_five_keys_present(self):
+    def test_all_six_keys_present(self):
         assert set(FILTER_REGISTRY.keys()) == {
-            "inning", "pitcher_hand", "home_away", "month", "count"
+            "inning", "pitcher_hand", "batter_hand", "home_away", "month", "count"
         }
 
     def test_inning_spec(self):
@@ -100,6 +100,11 @@ class TestFilterRegistry:
     def test_pitcher_hand_spec(self):
         s = FILTER_REGISTRY["pitcher_hand"]
         assert "p_throws" in s.required_cols
+        assert s.default_params["hand"] in ("L", "R")
+
+    def test_batter_hand_spec(self):
+        s = FILTER_REGISTRY["batter_hand"]
+        assert "stand" in s.required_cols
         assert s.default_params["hand"] in ("L", "R")
 
     def test_home_away_spec(self):
@@ -154,14 +159,23 @@ class TestSplitFilters:
     def test_new_fields_default_to_none(self):
         f = SplitFilters()
         assert f.pitcher_hand is None
+        assert f.batter_hand is None
         assert f.home_away is None
         assert f.month is None
         assert f.balls is None
         assert f.strikes is None
 
     def test_new_fields_settable(self):
-        f = SplitFilters(pitcher_hand="L", home_away="home", month=5, balls=2, strikes=1)
+        f = SplitFilters(
+            pitcher_hand="L",
+            batter_hand="R",
+            home_away="home",
+            month=5,
+            balls=2,
+            strikes=1,
+        )
         assert f.pitcher_hand == "L"
+        assert f.batter_hand == "R"
         assert f.home_away == "home"
         assert f.month == 5
         assert f.balls == 2
@@ -194,6 +208,16 @@ class TestRowsToSplitFilters:
         rows = [_row("pitcher_hand", {"hand": "L"})]
         result = rows_to_split_filters(rows)
         assert result.pitcher_hand == "L"
+
+    def test_batter_hand_row_right(self):
+        rows = [_row("batter_hand", {"hand": "R"})]
+        result = rows_to_split_filters(rows)
+        assert result.batter_hand == "R"
+
+    def test_batter_hand_row_left(self):
+        rows = [_row("batter_hand", {"hand": "L"})]
+        result = rows_to_split_filters(rows)
+        assert result.batter_hand == "L"
 
     def test_home_away_row_home(self):
         rows = [_row("home_away", {"side": "home"})]
@@ -295,6 +319,7 @@ class TestRowsToSplitFilters:
         result = rows_to_split_filters(rows)
         assert result.month == 6
         assert result.pitcher_hand is None
+        assert result.batter_hand is None
 
     # --- unrelated fields stay None ---
 
@@ -302,6 +327,7 @@ class TestRowsToSplitFilters:
         rows = [_row("inning", {"min": 1, "max": 9})]
         result = rows_to_split_filters(rows)
         assert result.pitcher_hand is None
+        assert result.batter_hand is None
         assert result.home_away is None
         assert result.month is None
         assert result.balls is None
@@ -375,6 +401,10 @@ class TestSummarizeFilterRows:
             "Inning range: 5-9, Pitcher handedness: L, Count: 1-2"
         )
 
+    def test_summary_includes_batter_hand(self):
+        rows = [_row("batter_hand", {"hand": "R"}, row_id="r1")]
+        assert summarize_filter_rows(rows) == "Batter handedness: R"
+
 
 # ===========================================================================
 # TestApplyFilters — inning (existing behaviour preserved)
@@ -435,6 +465,19 @@ class TestApplyFiltersPitcherHand:
         with pytest.raises(ValueError, match="p_throws"):
             apply_filters(df, SplitFilters(pitcher_hand="R"))
 
+class TestApplyFiltersBatterHand:
+    def test_batter_hand_filter_right(self):
+        df = _make_full_df().copy()
+        df["stand"] = ["R", "L", "R", "L", "R", "L"]
+        result = apply_filters(df, SplitFilters(batter_hand="R"))
+        assert result["inning"].tolist() == [1, 3, 5]
+
+    def test_batter_hand_filter_left(self):
+        df = _make_full_df().copy()
+        df["stand"] = ["R", "L", "R", "L", "R", "L"]
+        result = apply_filters(df, SplitFilters(batter_hand="L"))
+        assert result["inning"].tolist() == [2, 4, 6]
+
 
 # ===========================================================================
 # TestApplyFiltersHomeAway
@@ -455,6 +498,26 @@ class TestApplyFiltersHomeAway:
         df = pd.DataFrame({"inning": [1, 2]})
         with pytest.raises(ValueError, match="inning_topbot"):
             apply_filters(df, SplitFilters(home_away="home"))
+
+    def test_home_away_pitcher_perspective_inverts_mapping(self):
+        home = apply_filters(
+            _make_full_df(),
+            SplitFilters(home_away="home"),
+            pitcher_perspective=True,
+        )
+        away = apply_filters(
+            _make_full_df(),
+            SplitFilters(home_away="away"),
+            pitcher_perspective=True,
+        )
+        assert home["inning"].tolist() == [1, 3, 6]
+        assert away["inning"].tolist() == [2, 4, 5]
+
+    def test_home_away_batter_default_mapping_unchanged(self):
+        home = apply_filters(_make_full_df(), SplitFilters(home_away="home"))
+        away = apply_filters(_make_full_df(), SplitFilters(home_away="away"))
+        assert home["inning"].tolist() == [2, 4, 5]
+        assert away["inning"].tolist() == [1, 3, 6]
 
 
 # ===========================================================================
