@@ -32,6 +32,24 @@ PROPORTION_STATS: frozenset[str] = frozenset(["K%", "BB%", "HardHit%", "Barrel%"
 
 CORE_STATS: list[str] = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 
+PITCHER_PROPORTION_STATS: frozenset[str] = frozenset(
+    {"K%", "BB%", "K-BB%", "GB%", "HardHit%", "Barrel%", "CSW%", "FirstStrike%"}
+)
+FG_PITCHER_COLUMN_MAP: dict[str, str] = {"F-Strike%": "FirstStrike%"}
+PITCHER_DISTRIBUTION_STATS: list[str] = [
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "K-BB%",
+    "HardHit%",
+    "Barrel%",
+    "GB%",
+    "CSW%",
+    "FirstStrike%",
+]
+PITCHER_MIN_DISTRIBUTION_SAMPLE: int = 10
+
 # Color tiers (mirrors Baseball Savant convention).
 # List of (min_percentile_inclusive, name, hex).  Evaluated top-down.
 COLOR_TIERS: list[tuple[float, str, str]] = [
@@ -61,6 +79,28 @@ def build_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]
         if stat in PROPORTION_STATS:
             values = values * 100.0
         distributions[stat] = values
+    return distributions
+
+
+def build_pitcher_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Return per-stat arrays of qualified pitchers for percentile distributions."""
+    distributions: dict[str, np.ndarray] = {}
+    inverse_fg_map = {internal: fg for fg, internal in FG_PITCHER_COLUMN_MAP.items()}
+
+    for internal_stat in PITCHER_DISTRIBUTION_STATS:
+        fg_col = inverse_fg_map.get(internal_stat, internal_stat)
+        if fg_col not in season_df.columns:
+            continue
+
+        values = season_df[fg_col].dropna().to_numpy(dtype=float)
+        if len(values) < PITCHER_MIN_DISTRIBUTION_SAMPLE:
+            continue
+
+        if internal_stat in PITCHER_PROPORTION_STATS:
+            values = values * 100.0
+
+        distributions[internal_stat] = values
+
     return distributions
 
 
