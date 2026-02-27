@@ -97,9 +97,32 @@ SWING_DESCRIPTIONS = frozenset(
 # Per plan, FirstStrike% uses the same strike-classification set as CSW%.
 FIRST_STRIKE_DESCRIPTIONS = CSW_DESCRIPTIONS
 
+# Pitch type display labels used in the pitcher arsenal table.
+PITCH_TYPE_NAMES: dict[str, str] = {
+    "FA": "Fastball",
+    "FF": "Four-Seam Fastball",
+    "FT": "Two-Seam Fastball",
+    "SI": "Sinker",
+    "FC": "Cutter",
+    "FS": "Splitter",
+    "FO": "Forkball",
+    "CH": "Changeup",
+    "SC": "Screwball",
+    "SL": "Slider",
+    "ST": "Sweeper",
+    "SV": "Slurve",
+    "CU": "Curveball",
+    "KC": "Knuckle Curve",
+    "CS": "Slow Curve",
+    "KN": "Knuckleball",
+    "EP": "Eephus",
+}
+MIN_ARSENAL_PITCHES = 25
+
 # Ordered output columns
 SPLIT_COLS = ["Split", "PA", "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%", "GB%"]
 PITCHER_SPLIT_COLS = SPLIT_COLS + ["K-BB%", "CSW%", "Whiff%", "FirstStrike%"]
+ARSENAL_COLS = ["Pitch", "N", "Usage%", "Velo", "Spin", "CSW%", "Whiff%"]
 
 MONTH_NAMES = {
     3: "March/April",  # Spring Training overlap sometimes puts March games here
@@ -355,6 +378,61 @@ def _compute_all_pitcher_stats(df: pd.DataFrame) -> dict[str, float | int | None
     if k_pct is not None and bb_pct is not None:
         k_minus_bb = round(float(k_pct) - float(bb_pct), 1)
     return {**base, "K-BB%": k_minus_bb, **_compute_pitch_level_stats(df)}
+
+
+def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
+    """Return per-pitch-type arsenal metrics for a pitcher-season data subset.
+
+    Requires ``pitch_type`` and ``description`` columns. Returns an empty
+    DataFrame when either column is unavailable or no pitch types meet the
+    minimum sample threshold.
+    """
+    if "pitch_type" not in df.columns or "description" not in df.columns:
+        return pd.DataFrame(columns=ARSENAL_COLS)
+
+    work = df[df["pitch_type"].notna() & (df["pitch_type"] != "UN")].copy()
+    if work.empty:
+        return pd.DataFrame(columns=ARSENAL_COLS)
+
+    rows: list[dict[str, float | int | str | None]] = []
+    for pitch_type, grp in work.groupby("pitch_type", sort=False):
+        n_pitches = int(len(grp))
+        if n_pitches < MIN_ARSENAL_PITCHES:
+            continue
+
+        descriptions = grp["description"]
+        csw = int(descriptions.isin(CSW_DESCRIPTIONS).sum())
+        csw_pct = round((csw / n_pitches) * 100.0, 1)
+
+        swings = int(descriptions.isin(SWING_DESCRIPTIONS).sum())
+        whiffs = int(descriptions.isin(WHIFF_DESCRIPTIONS).sum())
+        whiff_pct: float | None = None
+        if swings > 0:
+            whiff_pct = round((whiffs / swings) * 100.0, 1)
+
+        velo = grp["release_speed"].mean() if "release_speed" in grp.columns else float("nan")
+        spin = grp["release_spin_rate"].mean() if "release_spin_rate" in grp.columns else float("nan")
+
+        rows.append(
+            {
+                "pitch_type": str(pitch_type),
+                "Pitch": PITCH_TYPE_NAMES.get(str(pitch_type), str(pitch_type)),
+                "N": n_pitches,
+                "Velo": velo,
+                "Spin": spin,
+                "CSW%": csw_pct,
+                "Whiff%": whiff_pct,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=ARSENAL_COLS)
+
+    arsenal = pd.DataFrame(rows)
+    total = float(arsenal["N"].sum())
+    arsenal["Usage%"] = round((arsenal["N"] / total) * 100.0, 1)
+    arsenal = arsenal.sort_values(by="Usage%", ascending=False, kind="stable")
+    return arsenal[ARSENAL_COLS].reset_index(drop=True)
 
 
 def get_sample_sizes(df: pd.DataFrame) -> dict[str, int | None]:

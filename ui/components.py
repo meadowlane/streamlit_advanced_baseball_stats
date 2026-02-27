@@ -27,6 +27,11 @@ _STAT_FORMAT: dict[str, tuple[str, str]] = {
     "BB%":       (".1f", "%"),
     "HardHit%":  (".1f", "%"),
     "Barrel%":   (".1f", "%"),
+    "GB%":       (".1f", "%"),
+    "CSW%":      (".1f", "%"),
+    "Whiff%":    (".1f", "%"),
+    "FirstStrike%": (".1f", "%"),
+    "K-BB%":     (".1f", "%"),
 }
 
 # Human-readable labels for split table column headers
@@ -38,6 +43,11 @@ _SPLIT_TABLE_FORMAT: dict[str, st.column_config.Column] = {
     "BB%":       st.column_config.NumberColumn("BB%",      format="%.1f%%"),
     "HardHit%":  st.column_config.NumberColumn("HardHit%", format="%.1f%%"),
     "Barrel%":   st.column_config.NumberColumn("Barrel%",  format="%.1f%%"),
+    "GB%":       st.column_config.NumberColumn("GB%",      format="%.1f%%"),
+    "K-BB%":     st.column_config.NumberColumn("K-BB%",    format="%.1f%%"),
+    "CSW%":      st.column_config.NumberColumn("CSW%",     format="%.1f%%"),
+    "Whiff%":    st.column_config.NumberColumn("Whiff%",   format="%.1f%%"),
+    "FirstStrike%": st.column_config.NumberColumn("FirstStrike%", format="%.1f%%"),
 }
 
 # Ordered display sequence for the 6 core stats
@@ -268,6 +278,29 @@ def split_table(df: pd.DataFrame) -> None:
         width="stretch",
         hide_index=True,
         column_config=col_config,
+    )
+
+
+def render_pitch_arsenal(arsenal_df: pd.DataFrame) -> None:
+    """Render a pitcher pitch-arsenal summary table."""
+    st.subheader("Pitch Arsenal")
+    if arsenal_df.empty:
+        st.info("No pitch arsenal data available for this selection.")
+        return
+
+    st.dataframe(
+        arsenal_df,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Pitch": st.column_config.TextColumn("Pitch"),
+            "N": st.column_config.NumberColumn("N", format="%d"),
+            "Usage%": st.column_config.NumberColumn("Usage%", format="%.1f%%"),
+            "Velo": st.column_config.NumberColumn("Velo", format="%.1f"),
+            "Spin": st.column_config.NumberColumn("Spin", format="%d"),
+            "CSW%": st.column_config.NumberColumn("CSW%", format="%.1f%%"),
+            "Whiff%": st.column_config.NumberColumn("Whiff%", format="%.1f%%"),
+        },
     )
 
 

@@ -28,6 +28,7 @@ from stats.splits import (
     STAT_REGISTRY,
     _compute_all_pitcher_stats,
     _compute_stats,
+    compute_pitch_arsenal,
     get_pitcher_splits,
     get_sample_sizes,
     get_splits,
@@ -36,6 +37,7 @@ from stats.splits import (
 from ui.components import (
     percentile_bar_chart,
     player_header,
+    render_pitch_arsenal,
     render_trend_section,
     split_table,
     stat_card,
@@ -68,7 +70,7 @@ SPLIT_TYPE_MAP = {
 }
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
-PITCHER_EXTRA_STATS = ["K-BB%"]
+PITCHER_EXTRA_STATS = ["GB%", "CSW%", "Whiff%", "FirstStrike%", "K-BB%"]
 _DEFAULT_STATS = CORE_STATS.copy()  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 
@@ -88,7 +90,19 @@ _INT_TO_MONTH = {v: k for k, v in _MONTH_TO_INT.items()}
 
 _BALLS_OPTS   = ["any", "0", "1", "2", "3"]
 _STRIKES_OPTS = ["any", "0", "1", "2"]
-_DELTA_DECIMALS = {"wOBA": 3, "xwOBA": 3, "K%": 1, "BB%": 1, "HardHit%": 1, "Barrel%": 1, "K-BB%": 1}
+_DELTA_DECIMALS = {
+    "wOBA": 3,
+    "xwOBA": 3,
+    "K%": 1,
+    "BB%": 1,
+    "HardHit%": 1,
+    "Barrel%": 1,
+    "GB%": 1,
+    "CSW%": 1,
+    "Whiff%": 1,
+    "FirstStrike%": 1,
+    "K-BB%": 1,
+}
 _GRID_COLS_PER_ROW = 3
 _DELTA_TILE_CSS = """
 <style>
@@ -121,6 +135,11 @@ _DELTA_TILE_HTML = """
   <div class="delta-value" style="color:{value_color};">{value}</div>
 </div>
 """
+
+
+def _available_filter_keys(player_type: str) -> list[str]:
+    excluded = {"batter_hand"} if player_type == "Batter" else {"pitcher_hand"}
+    return [k for k in FILTER_REGISTRY if k not in excluded]
 
 
 def _make_type_change_cb(row_id: str):
@@ -264,9 +283,29 @@ with st.sidebar:
     # Player-type mode selector (feature-flagged).
     player_type = DEFAULT_PLAYER_TYPE
     if FEATURE_PITCHERS:
-        player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
+        if "player_type" not in st.session_state:
+            st.session_state["player_type"] = DEFAULT_PLAYER_TYPE
+        player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True, key="player_type")
 
-    if st.session_state["enable_query_input"]:
+    _prev_player_type = st.session_state.get("_prev_player_type")
+    if _prev_player_type is None:
+        st.session_state["_prev_player_type"] = player_type
+    elif _prev_player_type != player_type:
+        st.session_state["_prev_player_type"] = player_type
+        st.session_state["player_selectbox"] = None
+        st.session_state["player_b_selectbox"] = None
+        st.session_state.pop("selected_stats_requested", None)
+        for stat in CORE_STATS + PITCHER_EXTRA_STATS:
+            st.session_state.pop(f"stat_show_{stat}", None)
+        st.session_state["filter_rows"] = [
+            row for row in st.session_state.get("filter_rows", [])
+            if row.get("filter_type") in _available_filter_keys(player_type)
+        ]
+        st.rerun()
+
+    if st.session_state["enable_query_input"] and player_type == "Pitcher":
+        st.caption("NL query is currently available for batter mode only.")
+    elif st.session_state["enable_query_input"]:
         with st.form("nl_query_form"):
             st.text_area("Type a query…", key="nl_query_input", height=100)
             nl_run = st.form_submit_button("Run", width="stretch")
@@ -538,6 +577,17 @@ with st.sidebar:
     if "_filter_next_id" not in st.session_state:
         st.session_state["_filter_next_id"] = 0
 
+    available_filter_keys = _available_filter_keys(player_type)
+    available_filter_labels = [FILTER_REGISTRY[k].label for k in available_filter_keys]
+
+    # Guard against cross-mode carryover (e.g., pitcher_hand row in pitcher mode).
+    filtered_rows = [
+        row for row in st.session_state["filter_rows"]
+        if row.get("filter_type") in available_filter_keys
+    ]
+    if len(filtered_rows) != len(st.session_state["filter_rows"]):
+        st.session_state["filter_rows"] = filtered_rows
+
     _n_filters = len(st.session_state["filter_rows"])
     _filter_label = f"Filters ({_n_filters} active)" if _n_filters > 0 else "Filters"
     with st.expander(_filter_label, expanded=False):
@@ -546,9 +596,12 @@ with st.sidebar:
             st.session_state["_filter_next_id"] += 1
             st.session_state["filter_rows"].append({
                 "id":          new_id,
-                "filter_type": "inning",
+                "filter_type": "inning" if "inning" in available_filter_keys else available_filter_keys[0],
                 "params":      FILTER_REGISTRY["inning"].default_params.copy(),
             })
+            if st.session_state["filter_rows"][-1]["filter_type"] != "inning":
+                chosen = st.session_state["filter_rows"][-1]["filter_type"]
+                st.session_state["filter_rows"][-1]["params"] = FILTER_REGISTRY[chosen].default_params.copy()
             st.rerun()
 
         rows = st.session_state["filter_rows"]
@@ -562,11 +615,16 @@ with st.sidebar:
 
             with col_lbl:
                 type_key = f"filter_{rid}_type"
+                if row["filter_type"] not in available_filter_keys:
+                    row["filter_type"] = available_filter_keys[0]
+                    row["params"] = FILTER_REGISTRY[row["filter_type"]].default_params.copy()
                 if type_key not in st.session_state:
+                    st.session_state[type_key] = FILTER_REGISTRY[row["filter_type"]].label
+                if st.session_state[type_key] not in available_filter_labels:
                     st.session_state[type_key] = FILTER_REGISTRY[row["filter_type"]].label
                 st.selectbox(
                     "Filter type",
-                    options=_REGISTRY_LABELS,
+                    options=available_filter_labels,
                     key=type_key,
                     label_visibility="collapsed",
                     on_change=_make_type_change_cb(rid),
@@ -600,7 +658,18 @@ with st.sidebar:
                 if k not in st.session_state:
                     st.session_state[k] = row["params"].get("hand", "R")
                 hand = st.radio(
-                    "Batter hand" if player_type == "Pitcher" else "Pitcher hand",
+                    "Pitcher hand",
+                    ["L", "R"],
+                    key=k, horizontal=True, label_visibility="collapsed",
+                )
+                row["params"]["hand"] = hand
+
+            elif ft == "batter_hand":
+                k = f"filter_{rid}_batter_hand"
+                if k not in st.session_state:
+                    st.session_state[k] = row["params"].get("hand", "R")
+                hand = st.radio(
+                    "Batter hand",
                     ["L", "R"],
                     key=k, horizontal=True, label_visibility="collapsed",
                 )
@@ -767,7 +836,7 @@ if comparison_mode and statcast_df_b is not None:
     validation_frames.append((selected_name_b, statcast_df_b))
 
 for stat in selected_stats_requested:
-    if stat == "K-BB%" and player_type == "Pitcher":
+    if stat in {"K-BB%", "CSW%", "Whiff%", "FirstStrike%"} and player_type == "Pitcher":
         selected_stats.append(stat)
         continue
 
@@ -802,7 +871,7 @@ if missing_stat_requirements:
 _raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
-distributions = build_league_distributions(season_df)
+distributions = {} if player_type == "Pitcher" else build_league_distributions(season_df)
 percentiles   = get_all_percentiles(player_stats, distributions)
 color_tiers   = get_all_color_tiers(percentiles)
 
@@ -814,9 +883,13 @@ if comparison_mode and filtered_df_b is not None:
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
-        build_league_distributions(season_df_b_fg)
-        if season_b != season_a
-        else distributions
+        {}
+        if player_type == "Pitcher"
+        else (
+            build_league_distributions(season_df_b_fg)
+            if season_b != season_a
+            else distributions
+        )
     )
     percentiles_b = get_all_percentiles(player_stats_b, distributions_b)
     color_tiers_b = get_all_color_tiers(percentiles_b)
@@ -883,7 +956,9 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader("Percentile Rankings vs. League")
-if comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
+if player_type == "Pitcher":
+    st.caption("Percentile rankings are not yet available for pitchers.")
+elif comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
     st.caption(f"Player A: {selected_name}")
     percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
     st.caption(f"Player B: {selected_name_b}")
@@ -963,6 +1038,24 @@ else:
             split_table(splits_df[split_cols])
 
 st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Pitch arsenal
+# ---------------------------------------------------------------------------
+
+if player_type == "Pitcher":
+    if comparison_mode and filtered_df_b is not None:
+        col_a_arsenal, col_b_arsenal = st.columns(2)
+        with col_a_arsenal:
+            st.caption(f"Player A: {selected_name}")
+            render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+        with col_b_arsenal:
+            st.caption(f"Player B: {selected_name_b}")
+            render_pitch_arsenal(compute_pitch_arsenal(filtered_df_b))
+    else:
+        render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+    st.divider()
 
 
 # ---------------------------------------------------------------------------
