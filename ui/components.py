@@ -38,7 +38,9 @@ _STAT_FORMAT: dict[str, tuple[str, str]] = {
 _SPLIT_TABLE_FORMAT: dict[str, st.column_config.Column] = {
     "PA":        st.column_config.NumberColumn("PA",       format="%d"),
     "wOBA":      st.column_config.NumberColumn("wOBA",     format="%.3f"),
+    "wOBA Allowed": st.column_config.NumberColumn("wOBA Allowed", format="%.3f"),
     "xwOBA":     st.column_config.NumberColumn("xwOBA",    format="%.3f"),
+    "xwOBA Allowed": st.column_config.NumberColumn("xwOBA Allowed", format="%.3f"),
     "K%":        st.column_config.NumberColumn("K%",       format="%.1f%%"),
     "BB%":       st.column_config.NumberColumn("BB%",      format="%.1f%%"),
     "HardHit%":  st.column_config.NumberColumn("HardHit%", format="%.1f%%"),
@@ -178,21 +180,44 @@ def stat_cards_row(
     percentiles: dict[str, float],
     color_tiers: dict[str, dict[str, str]],
     stats_order: list[str] | None = None,
+    cols_per_row: int | None = None,
+    label_overrides: dict[str, str] | None = None,
 ) -> None:
-    """Render all 6 core stat cards in a single row of columns."""
+    """Render stat cards in a single row or wrapped rows when requested."""
     order = stats_order if stats_order is not None else _ORDERED_STATS
     if not order:
         st.info("No stats selected.")
         return
-    cols = st.columns(len(order))
-    for col, stat in zip(cols, order):
-        with col:
-            stat_card(
-                label=stat,
-                value=stat_values.get(stat),
-                percentile=percentiles.get(stat, np.nan),
-                color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
-            )
+
+    if cols_per_row is None:
+        cols = st.columns(len(order))
+        for col, stat in zip(cols, order):
+            with col:
+                stat_card(
+                    label=(label_overrides or {}).get(stat, stat),
+                    value=stat_values.get(stat),
+                    percentile=percentiles.get(stat, np.nan),
+                    color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
+                )
+        return
+
+    row_width = max(1, int(cols_per_row))
+    label_map = label_overrides or {}
+    for start in range(0, len(order), row_width):
+        row_stats = order[start:start + row_width]
+        cols = st.columns(row_width)
+        for idx in range(row_width):
+            with cols[idx]:
+                if idx < len(row_stats):
+                    stat = row_stats[idx]
+                    stat_card(
+                        label=label_map.get(stat, stat),
+                        value=stat_values.get(stat),
+                        percentile=percentiles.get(stat, np.nan),
+                        color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
+                    )
+                else:
+                    st.empty()
 
 
 # ---------------------------------------------------------------------------
@@ -284,24 +309,26 @@ def split_table(df: pd.DataFrame) -> None:
 def render_pitch_arsenal(arsenal_df: pd.DataFrame) -> None:
     """Render a pitcher pitch-arsenal summary table."""
     st.subheader("Pitch Arsenal")
-    if arsenal_df.empty:
-        st.info("No pitch arsenal data available for this selection.")
-        return
+    st.caption("min. 25 pitches per type")
+    with st.expander("Show pitch mix", expanded=True):
+        if arsenal_df.empty:
+            st.info("No pitch arsenal data available for this selection.")
+            return
 
-    st.dataframe(
-        arsenal_df,
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "Pitch": st.column_config.TextColumn("Pitch"),
-            "N": st.column_config.NumberColumn("N", format="%d"),
-            "Usage%": st.column_config.NumberColumn("Usage%", format="%.1f%%"),
-            "Velo": st.column_config.NumberColumn("Velo", format="%.1f"),
-            "Spin": st.column_config.NumberColumn("Spin", format="%d"),
-            "CSW%": st.column_config.NumberColumn("CSW%", format="%.1f%%"),
-            "Whiff%": st.column_config.NumberColumn("Whiff%", format="%.1f%%"),
-        },
-    )
+        st.dataframe(
+            arsenal_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Pitch": st.column_config.TextColumn("Pitch"),
+                "N": st.column_config.NumberColumn("N", format="%d"),
+                "Usage%": st.column_config.NumberColumn("Usage%", format="%.1f%%"),
+                "Velo": st.column_config.NumberColumn("Velo", format="%.1f"),
+                "Spin": st.column_config.NumberColumn("Spin", format="%d"),
+                "CSW%": st.column_config.NumberColumn("CSW%", format="%.1f%%"),
+                "Whiff%": st.column_config.NumberColumn("Whiff%", format="%.1f%%"),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

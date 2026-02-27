@@ -70,9 +70,12 @@ SPLIT_TYPE_MAP = {
 }
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
-PITCHER_EXTRA_STATS = ["GB%", "CSW%", "Whiff%", "FirstStrike%", "K-BB%"]
+PITCHER_CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "K-BB%", "CSW%"]
+PITCHER_SECONDARY_STATS = ["HardHit%", "Barrel%", "GB%", "Whiff%", "FirstStrike%"]
+PITCHER_EXTRA_STATS = [stat for stat in (PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS) if stat not in CORE_STATS]
 _DEFAULT_STATS = CORE_STATS.copy()  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
+_PITCHER_STAT_LABELS = {"wOBA": "wOBA Allowed", "xwOBA": "xwOBA Allowed"}
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +86,7 @@ _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 # sidebar dropdown always stays in sync with the backend registry.
 _REGISTRY_LABELS = [spec.label for spec in FILTER_REGISTRY.values()]
 _LABEL_TO_KEY    = {spec.label: spec.key for spec in FILTER_REGISTRY.values()}
+_LABEL_TO_KEY["Batter hand"] = "batter_hand"
 
 _MONTH_LABELS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"]
 _MONTH_TO_INT = {"Apr": 4, "May": 5, "Jun": 6, "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10}
@@ -142,6 +146,12 @@ def _available_filter_keys(player_type: str) -> list[str]:
     return [k for k in FILTER_REGISTRY if k not in excluded]
 
 
+def _sidebar_filter_label(filter_key: str, player_type: str) -> str:
+    if player_type == "Pitcher" and filter_key == "batter_hand":
+        return "Batter hand"
+    return FILTER_REGISTRY[filter_key].label
+
+
 def _make_type_change_cb(row_id: str):
     """Return an on_change callback that resets params when filter type changes."""
     def _cb():
@@ -191,11 +201,13 @@ def _render_player_stat_grid(
     percentiles: dict[str, float],
     color_tiers: dict[str, dict[str, str]],
     stats_order: list[str],
+    label_overrides: dict[str, str] | None = None,
 ) -> None:
     if not stats_order:
         st.info("No stats selected.")
         return
 
+    label_map = label_overrides or {}
     for stat_row in _chunk_stats(stats_order):
         row_cols = st.columns(_GRID_COLS_PER_ROW)
         for col_idx in range(_GRID_COLS_PER_ROW):
@@ -203,7 +215,7 @@ def _render_player_stat_grid(
                 if col_idx < len(stat_row):
                     stat = stat_row[col_idx]
                     stat_card(
-                        label=stat,
+                        label=label_map.get(stat, stat),
                         value=stat_values.get(stat),
                         percentile=percentiles.get(stat),
                         color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
@@ -216,11 +228,13 @@ def _render_delta_stat_grid(
     stats_order: list[str],
     player_stats_a: dict[str, float | None],
     player_stats_b: dict[str, float | None],
+    label_overrides: dict[str, str] | None = None,
 ) -> None:
     if not stats_order:
         st.info("No stats selected.")
         return
 
+    label_map = label_overrides or {}
     for stat_row in _chunk_stats(stats_order):
         row_cols = st.columns(_GRID_COLS_PER_ROW)
         for col_idx in range(_GRID_COLS_PER_ROW):
@@ -238,7 +252,7 @@ def _render_delta_stat_grid(
 
                     st.markdown(
                         _DELTA_TILE_CSS
-                        + _DELTA_TILE_HTML.format(label=stat, value=delta_str, value_color=value_color),
+                        + _DELTA_TILE_HTML.format(label=label_map.get(stat, stat), value=delta_str, value_color=value_color),
                         unsafe_allow_html=True,
                     )
                 else:
@@ -526,7 +540,11 @@ with st.sidebar:
         season_b = season_a
 
     # ── Stats to show ─────────────────────────────────────────────────────────
-    stats_catalog = CORE_STATS + PITCHER_EXTRA_STATS if player_type == "Pitcher" else CORE_STATS
+    stats_catalog = (
+        PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS
+        if player_type == "Pitcher"
+        else CORE_STATS
+    )
     if "selected_stats_requested" not in st.session_state:
         st.session_state["selected_stats_requested"] = stats_catalog.copy()
 
@@ -543,7 +561,11 @@ with st.sidebar:
         with btn_col1:
             if st.button("Reset", key="stats_reset_defaults", width="stretch",
                          help="Restore default stats"):
-                default_stats = _DEFAULT_STATS + PITCHER_EXTRA_STATS if player_type == "Pitcher" else _DEFAULT_STATS
+                default_stats = (
+                    PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS
+                    if player_type == "Pitcher"
+                    else _DEFAULT_STATS
+                )
                 for stat in stats_catalog:
                     st.session_state[f"stat_show_{stat}"] = stat in default_stats
                 st.rerun()
@@ -578,7 +600,7 @@ with st.sidebar:
         st.session_state["_filter_next_id"] = 0
 
     available_filter_keys = _available_filter_keys(player_type)
-    available_filter_labels = [FILTER_REGISTRY[k].label for k in available_filter_keys]
+    available_filter_labels = [_sidebar_filter_label(k, player_type) for k in available_filter_keys]
 
     # Guard against cross-mode carryover (e.g., pitcher_hand row in pitcher mode).
     filtered_rows = [
@@ -618,10 +640,11 @@ with st.sidebar:
                 if row["filter_type"] not in available_filter_keys:
                     row["filter_type"] = available_filter_keys[0]
                     row["params"] = FILTER_REGISTRY[row["filter_type"]].default_params.copy()
+                current_type_label = _sidebar_filter_label(row["filter_type"], player_type)
                 if type_key not in st.session_state:
-                    st.session_state[type_key] = FILTER_REGISTRY[row["filter_type"]].label
+                    st.session_state[type_key] = current_type_label
                 if st.session_state[type_key] not in available_filter_labels:
-                    st.session_state[type_key] = FILTER_REGISTRY[row["filter_type"]].label
+                    st.session_state[type_key] = current_type_label
                 st.selectbox(
                     "Filter type",
                     options=available_filter_labels,
@@ -718,7 +741,8 @@ with st.sidebar:
 
     active_filter_summary = summarize_filter_rows(st.session_state["filter_rows"])
     if player_type == "Pitcher":
-        active_filter_summary = active_filter_summary.replace("Pitcher handedness", "Batter handedness")
+        active_filter_summary = active_filter_summary.replace("Pitcher handedness", "Batter hand")
+        active_filter_summary = active_filter_summary.replace("Batter handedness", "Batter hand")
     st.caption(f"Active: {active_filter_summary}")
 
     filters = rows_to_split_filters(st.session_state["filter_rows"])
@@ -925,16 +949,29 @@ else:
     st.caption(f"Active filters: {active_filter_summary}")
 
 st.subheader("Season Stats")
+pitcher_label_overrides = _PITCHER_STAT_LABELS if player_type == "Pitcher" else None
 if comparison_mode and player_stats_b is not None and percentiles_b is not None and color_tiers_b is not None:
     col_a, col_b, col_delta = st.columns(3)
     with col_a:
         st.markdown(f"**{selected_name}**")
         st.caption(_sample_size_text(sample_sizes, player_type))
-        _render_player_stat_grid(player_stats, percentiles, color_tiers, selected_stats)
+        _render_player_stat_grid(
+            player_stats,
+            percentiles,
+            color_tiers,
+            selected_stats,
+            label_overrides=pitcher_label_overrides,
+        )
     with col_b:
         st.markdown(f"**{selected_name_b}**")
         st.caption(_sample_size_text(sample_sizes_b, player_type))
-        _render_player_stat_grid(player_stats_b, percentiles_b, color_tiers_b, selected_stats)
+        _render_player_stat_grid(
+            player_stats_b,
+            percentiles_b,
+            color_tiers_b,
+            selected_stats,
+            label_overrides=pitcher_label_overrides,
+        )
     with col_delta:
         if season_a != season_b:
             st.markdown(f"**Difference ({selected_name} {season_a} minus {selected_name_b} {season_b})**")
@@ -943,30 +980,99 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
         st.caption(
             f"Positive means {selected_name} is higher; negative means {selected_name_b} is higher."
         )
-        _render_delta_stat_grid(selected_stats, player_stats, player_stats_b)
+        _render_delta_stat_grid(
+            selected_stats,
+            player_stats,
+            player_stats_b,
+            label_overrides=pitcher_label_overrides,
+        )
 else:
     st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
-    stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
+    if player_type == "Pitcher":
+        core_card_order = ["wOBA", "xwOBA", "K-BB%", "K%", "BB%", "CSW%"]
+        contact_order = ["HardHit%", "Barrel%", "GB%"]
+        command_order = ["Whiff%", "FirstStrike%"]
+        core_stats = [s for s in core_card_order if s in selected_stats]
+        contact_stats = [s for s in contact_order if s in selected_stats]
+        command_stats = [s for s in command_order if s in selected_stats]
+
+        if core_stats:
+            st.markdown("**Core Pitching Stats**")
+            stat_cards_row(
+                player_stats,
+                percentiles,
+                color_tiers,
+                stats_order=core_stats,
+                cols_per_row=3,
+                label_overrides=_PITCHER_STAT_LABELS,
+            )
+            st.caption("wOBA/xwOBA allowed per BF result · K%, BB%, K-BB% per BF · CSW% per pitch")
+
+        if contact_stats:
+            st.markdown("**Contact & Batted Ball Profile**")
+            stat_cards_row(
+                player_stats,
+                percentiles,
+                color_tiers,
+                stats_order=contact_stats,
+                cols_per_row=3,
+                label_overrides=_PITCHER_STAT_LABELS,
+            )
+            st.caption("per batted ball event")
+
+        if command_stats:
+            st.markdown("**Pitch Command Detail**")
+            stat_cards_row(
+                player_stats,
+                percentiles,
+                color_tiers,
+                stats_order=command_stats,
+                cols_per_row=2,
+                label_overrides=_PITCHER_STAT_LABELS,
+            )
+            st.caption("Whiff% per swing · First-Strike% per 0-0 first pitch")
+
+        if not (core_stats or contact_stats or command_stats):
+            st.info("No stats selected.")
+    else:
+        stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
 
 st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Pitch arsenal
+# ---------------------------------------------------------------------------
+
+if player_type == "Pitcher":
+    if comparison_mode and filtered_df_b is not None:
+        col_a_arsenal, col_b_arsenal = st.columns(2)
+        with col_a_arsenal:
+            st.caption(f"Player A: {selected_name}")
+            render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+        with col_b_arsenal:
+            st.caption(f"Player B: {selected_name_b}")
+            render_pitch_arsenal(compute_pitch_arsenal(filtered_df_b))
+    else:
+        render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+    st.divider()
 
 
 # ---------------------------------------------------------------------------
 # Percentile bar chart
 # ---------------------------------------------------------------------------
 
-st.subheader("Percentile Rankings vs. League")
-if player_type == "Pitcher":
-    st.caption("Percentile rankings are not yet available for pitchers.")
-elif comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
-    st.caption(f"Player A: {selected_name}")
-    percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
-    st.caption(f"Player B: {selected_name_b}")
-    percentile_bar_chart(percentiles_b, color_tiers_b, player_stats_b, stats_order=selected_stats)
-else:
-    percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
+if player_type != "Pitcher":
+    st.subheader("Percentile Rankings vs. League")
+    if comparison_mode and percentiles_b is not None and color_tiers_b is not None and player_stats_b is not None:
+        st.caption(f"Player A: {selected_name}")
+        percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
+        st.caption(f"Player B: {selected_name_b}")
+        percentile_bar_chart(percentiles_b, color_tiers_b, player_stats_b, stats_order=selected_stats)
+    else:
+        percentile_bar_chart(percentiles, color_tiers, player_stats, stats_order=selected_stats)
 
-st.divider()
+    st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -997,7 +1103,10 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
                 st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
             else:
                 split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
-                split_table(splits_df[split_cols])
+                split_view = splits_df[split_cols]
+                if player_type == "Pitcher":
+                    split_view = split_view.rename(columns=_PITCHER_STAT_LABELS)
+                split_table(split_view)
 
     with right_split_col:
         st.caption(f"Player B: {selected_name_b}")
@@ -1017,7 +1126,10 @@ if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
                 st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
             else:
                 split_cols_b = ["Split", "PA"] + [s for s in selected_stats if s in splits_df_b.columns]
-                split_table(splits_df_b[split_cols_b])
+                split_view_b = splits_df_b[split_cols_b]
+                if player_type == "Pitcher":
+                    split_view_b = split_view_b.rename(columns=_PITCHER_STAT_LABELS)
+                split_table(split_view_b)
 else:
     if statcast_df.empty:
         st.warning(
@@ -1035,27 +1147,12 @@ else:
             st.info(f"No {'batters faced' if player_type == 'Pitcher' else 'plate appearances'} found for the selected split.")
         else:
             split_cols = ["Split", "PA"] + [s for s in selected_stats if s in splits_df.columns]
-            split_table(splits_df[split_cols])
+            split_view = splits_df[split_cols]
+            if player_type == "Pitcher":
+                split_view = split_view.rename(columns=_PITCHER_STAT_LABELS)
+            split_table(split_view)
 
 st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Pitch arsenal
-# ---------------------------------------------------------------------------
-
-if player_type == "Pitcher":
-    if comparison_mode and filtered_df_b is not None:
-        col_a_arsenal, col_b_arsenal = st.columns(2)
-        with col_a_arsenal:
-            st.caption(f"Player A: {selected_name}")
-            render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
-        with col_b_arsenal:
-            st.caption(f"Player B: {selected_name_b}")
-            render_pitch_arsenal(compute_pitch_arsenal(filtered_df_b))
-    else:
-        render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
-    st.divider()
 
 
 # ---------------------------------------------------------------------------
