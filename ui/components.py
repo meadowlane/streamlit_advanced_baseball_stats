@@ -241,7 +241,7 @@ def percentile_bar_chart(
 
     st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         config={"displayModeBar": False},
     )
 
@@ -265,7 +265,7 @@ def split_table(df: pd.DataFrame) -> None:
 
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config=col_config,
     )
@@ -480,7 +480,7 @@ def render_trend_section(
         hovermode="closest",
         title=title_text,
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     if not stat_df_b.empty and player_label_b is not None:
         a_table = stat_df_a[["year", "value", "n_pitches", "approx_pa"]].rename(
@@ -526,7 +526,7 @@ def render_trend_section(
 
         st.dataframe(
             table_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config=column_config,
         )
@@ -539,7 +539,7 @@ def render_trend_section(
 
         st.dataframe(
             table_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "year": st.column_config.NumberColumn("year", format="%d"),

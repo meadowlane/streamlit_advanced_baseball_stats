@@ -249,7 +249,7 @@ with st.sidebar:
     if st.session_state["enable_query_input"]:
         with st.form("nl_query_form"):
             st.text_area("Type a query…", key="nl_query_input", height=100)
-            nl_run = st.form_submit_button("Run", use_container_width=True)
+            nl_run = st.form_submit_button("Run", width="stretch")
 
         if nl_run:
             raw_query = st.session_state.get("nl_query_input", "").strip()
@@ -390,7 +390,7 @@ with st.sidebar:
         st.warning(f"No MLB Statcast data for {selected_name} in {season_a}.")
 
     if selected_name is not None:
-        if st.button("Clear player", use_container_width=True):
+        if st.button("Clear player", width="stretch"):
             st.session_state["_clear_player_pending"] = True
             st.rerun()
 
@@ -450,7 +450,7 @@ with st.sidebar:
             st.warning(f"No MLB Statcast data for {selected_name_b} in {season_b}.")
 
         if selected_name_b is not None:
-            if st.button("Clear player B", use_container_width=True):
+            if st.button("Clear player B", width="stretch"):
                 st.session_state["_clear_player_b_pending"] = True
                 st.rerun()
     else:
@@ -474,19 +474,19 @@ with st.sidebar:
 
         btn_col1, btn_col2, btn_col3 = st.columns(3)
         with btn_col1:
-            if st.button("Reset", key="stats_reset_defaults", use_container_width=True,
+            if st.button("Reset", key="stats_reset_defaults", width="stretch",
                          help="Restore default stats"):
                 for stat in CORE_STATS:
                     st.session_state[f"stat_show_{stat}"] = stat in _DEFAULT_STATS
                 st.rerun()
         with btn_col2:
-            if st.button("All", key="stats_select_all", use_container_width=True,
+            if st.button("All", key="stats_select_all", width="stretch",
                          help="Enable all stats"):
                 for stat in CORE_STATS:
                     st.session_state[f"stat_show_{stat}"] = True
                 st.rerun()
         with btn_col3:
-            if st.button("None", key="stats_select_none", use_container_width=True):
+            if st.button("None", key="stats_select_none", width="stretch"):
                 for stat in CORE_STATS:
                     st.session_state[f"stat_show_{stat}"] = False
                 st.rerun()
