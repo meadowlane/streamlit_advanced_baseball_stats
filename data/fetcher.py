@@ -1,5 +1,8 @@
 """Data fetching layer — wraps pybaseball with Streamlit caching."""
 
+import os
+from pathlib import Path
+
 import streamlit as st
 import pybaseball as pb
 import pandas as pd
@@ -33,6 +36,14 @@ STATCAST_KEEP_COLS = [
     "strikes",           # strike count at time of pitch (0–2)
 ]
 
+_DISK_CACHE_ROOT = Path(
+    os.getenv(
+        "CLAUDE_BASEBALL_CACHE_DIR",
+        str(Path(__file__).resolve().parents[1] / ".cache"),
+    )
+)
+_STATCAST_YEAR_CACHE_DIR = _DISK_CACHE_ROOT / "statcast_year"
+
 
 # ---------------------------------------------------------------------------
 # Pure fetch functions (no cache — called by cached wrappers; testable directly)
@@ -56,6 +67,16 @@ def _fetch_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     return df[cols].copy()
 
 
+def _fetch_statcast_pitcher(player_mlbam_id: int, season: int) -> pd.DataFrame:
+    """Return raw Statcast pitch-level events for one pitcher for a full season."""
+    pb.cache.enable()
+    start = f"{season}-03-01"
+    end = f"{season}-11-30"
+    df = pb.statcast_pitcher(start, end, player_mlbam_id)
+    cols = [c for c in STATCAST_KEEP_COLS if c in df.columns]
+    return df[cols].copy()
+
+
 def _lookup_player(last_name: str, first_name: str = "") -> pd.DataFrame:
     """Return player ID table from pybaseball name lookup."""
     return pb.playerid_lookup(last_name, first_name)
@@ -71,10 +92,56 @@ def get_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
     return _fetch_batting_stats(season, min_pa)
 
 
+def _normalize_mode(mode: str) -> str:
+    lowered = str(mode).strip().lower()
+    return "pitcher" if lowered.startswith("pitch") else "batter"
+
+
+def _statcast_year_cache_path(player_mlbam_id: int, season: int, mode: str) -> Path:
+    mode_key = _normalize_mode(mode)
+    return _STATCAST_YEAR_CACHE_DIR / f"{mode_key}_{int(player_mlbam_id)}_{int(season)}.pkl"
+
+
+def _load_year_df_from_disk(player_mlbam_id: int, season: int, mode: str) -> pd.DataFrame | None:
+    cache_path = _statcast_year_cache_path(player_mlbam_id, season, mode)
+    if not cache_path.exists():
+        return None
+
+    try:
+        cached = pd.read_pickle(cache_path)
+    except Exception:
+        return None
+
+    return cached.copy() if isinstance(cached, pd.DataFrame) else None
+
+
+def _save_year_df_to_disk(player_mlbam_id: int, season: int, mode: str, df: pd.DataFrame) -> None:
+    cache_path = _statcast_year_cache_path(player_mlbam_id, season, mode)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_pickle(cache_path)
+    except Exception:
+        # Disk caching is a performance enhancement; failures should not block app flow.
+        return
+
+
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)
+def load_or_fetch_year_df(player_mlbam_id: int, season: int, mode: str = "batter") -> pd.DataFrame:
+    """Return one season of Statcast data using disk+Streamlit caching."""
+    mode_key = _normalize_mode(mode)
+    disk_cached = _load_year_df_from_disk(player_mlbam_id, season, mode_key)
+    if disk_cached is not None:
+        return disk_cached
+
+    fetcher = _fetch_statcast_pitcher if mode_key == "pitcher" else _fetch_statcast_batter
+    fetched = fetcher(player_mlbam_id, season)
+    _save_year_df_to_disk(player_mlbam_id, season, mode_key, fetched)
+    return fetched
+
+
 def get_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     """Cached raw Statcast events for one batter."""
-    return _fetch_statcast_batter(player_mlbam_id, season)
+    return load_or_fetch_year_df(player_mlbam_id, season, mode="batter")
 
 
 @st.cache_data(ttl=_TTL_IDS, show_spinner=False)
