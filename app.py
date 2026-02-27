@@ -234,91 +234,102 @@ with st.sidebar:
         st.session_state["season_b"] = st.session_state["season_a"]
     if "link_seasons" not in st.session_state:
         st.session_state["link_seasons"] = True
+    debug_param = str(st.query_params.get("debug", "")).strip().lower()
+    experimental_param = str(st.query_params.get("experimental", "")).strip().lower()
+    query_authed = (
+        debug_param in {"1", "true", "yes", "on"}
+        or experimental_param in {"1", "true", "yes", "on"}
+    )
+    if "enable_query_input" not in st.session_state:
+        st.session_state["enable_query_input"] = query_authed
+    elif query_authed:
+        st.session_state["enable_query_input"] = True
 
-    with st.form("nl_query_form"):
-        st.text_area("Type a query…", key="nl_query_input", height=100)
-        nl_run = st.form_submit_button("Run", use_container_width=True)
+    if st.session_state["enable_query_input"]:
+        with st.form("nl_query_form"):
+            st.text_area("Type a query…", key="nl_query_input", height=100)
+            nl_run = st.form_submit_button("Run", use_container_width=True)
 
-    if nl_run:
-        raw_query = st.session_state.get("nl_query_input", "").strip()
-        if not raw_query:
-            st.session_state["_nl_parsed_preview"] = {
-                "raw_query": "",
-                "cleaned_query": "",
-                "player_a": None,
-                "player_b": None,
-                "comparison_mode": False,
-                "season_a": None,
-                "season_b": None,
-                "link_seasons": True,
-                "season": None,
-                "selected_stats": [],
-                "filter_rows": [],
-                "warnings": ["Query is empty. Enter a player-oriented query and try again."],
-            }
+        if nl_run:
+            raw_query = st.session_state.get("nl_query_input", "").strip()
+            if not raw_query:
+                st.session_state["_nl_parsed_preview"] = {
+                    "raw_query": "",
+                    "cleaned_query": "",
+                    "player_a": None,
+                    "player_b": None,
+                    "comparison_mode": False,
+                    "season_a": None,
+                    "season_b": None,
+                    "link_seasons": True,
+                    "season": None,
+                    "selected_stats": [],
+                    "filter_rows": [],
+                    "warnings": ["Query is empty. Enter a player-oriented query and try again."],
+                }
+                st.rerun()
+
+            parsed_year = extract_last_year(raw_query)
+            lookup_season = parsed_year if parsed_year in SEASONS else st.session_state["season_a"]
+
+            with st.spinner("Parsing query…"):
+                lookup_df = get_batting_stats(lookup_season)
+
+            lookup_player_names = sorted(
+                lookup_df["Name"].dropna().unique().tolist(),
+                key=lambda n: n.split()[-1],
+            )
+            parsed_intent = parse_nl_query(
+                raw_query,
+                lookup_player_names,
+                valid_seasons=set(SEASONS),
+                allowed_stats=CORE_STATS,
+            )
+
+            st.session_state["_nl_parsed_preview"] = parsed_intent
+
+            parsed_season_a = parsed_intent.get("season_a")
+            parsed_season_b = parsed_intent.get("season_b")
+            parsed_link_seasons = parsed_intent.get("link_seasons")
+            if parsed_season_a in SEASONS:
+                st.session_state["season_a"] = parsed_season_a
+            if parsed_season_b in SEASONS:
+                st.session_state["season_b"] = parsed_season_b
+            if isinstance(parsed_link_seasons, bool):
+                st.session_state["link_seasons"] = parsed_link_seasons
+
+            parsed_player_a = parsed_intent.get("player_a")
+            if parsed_player_a is not None:
+                st.session_state["player_selectbox"] = parsed_player_a
+
+            parsed_comparison = bool(parsed_intent.get("comparison_mode"))
+            parsed_player_b = parsed_intent.get("player_b")
+            if parsed_comparison:
+                st.session_state["comparison_mode"] = True
+                st.session_state["player_b_selectbox"] = parsed_player_b
+            else:
+                st.session_state["comparison_mode"] = False
+                st.session_state["player_b_selectbox"] = None
+                st.session_state["link_seasons"] = True
+
+            parsed_rows = parsed_intent.get("filter_rows", [])
+            st.session_state["filter_rows"] = parsed_rows
+            st.session_state["_filter_next_id"] = len(parsed_rows)
+
+            parsed_stats = parsed_intent.get("selected_stats", [])
+            if parsed_stats:
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = stat in parsed_stats
+                st.session_state["selected_stats_requested"] = parsed_stats
+
             st.rerun()
 
-        parsed_year = extract_last_year(raw_query)
-        lookup_season = parsed_year if parsed_year in SEASONS else st.session_state["season_a"]
-
-        with st.spinner("Parsing query…"):
-            lookup_df = get_batting_stats(lookup_season)
-
-        lookup_player_names = sorted(
-            lookup_df["Name"].dropna().unique().tolist(),
-            key=lambda n: n.split()[-1],
-        )
-        parsed_intent = parse_nl_query(
-            raw_query,
-            lookup_player_names,
-            valid_seasons=set(SEASONS),
-            allowed_stats=CORE_STATS,
-        )
-
-        st.session_state["_nl_parsed_preview"] = parsed_intent
-
-        parsed_season_a = parsed_intent.get("season_a")
-        parsed_season_b = parsed_intent.get("season_b")
-        parsed_link_seasons = parsed_intent.get("link_seasons")
-        if parsed_season_a in SEASONS:
-            st.session_state["season_a"] = parsed_season_a
-        if parsed_season_b in SEASONS:
-            st.session_state["season_b"] = parsed_season_b
-        if isinstance(parsed_link_seasons, bool):
-            st.session_state["link_seasons"] = parsed_link_seasons
-
-        parsed_player_a = parsed_intent.get("player_a")
-        if parsed_player_a is not None:
-            st.session_state["player_selectbox"] = parsed_player_a
-
-        parsed_comparison = bool(parsed_intent.get("comparison_mode"))
-        parsed_player_b = parsed_intent.get("player_b")
-        if parsed_comparison:
-            st.session_state["comparison_mode"] = True
-            st.session_state["player_b_selectbox"] = parsed_player_b
-        else:
-            st.session_state["comparison_mode"] = False
-            st.session_state["player_b_selectbox"] = None
-            st.session_state["link_seasons"] = True
-
-        parsed_rows = parsed_intent.get("filter_rows", [])
-        st.session_state["filter_rows"] = parsed_rows
-        st.session_state["_filter_next_id"] = len(parsed_rows)
-
-        parsed_stats = parsed_intent.get("selected_stats", [])
-        if parsed_stats:
-            for stat in CORE_STATS:
-                st.session_state[f"stat_show_{stat}"] = stat in parsed_stats
-            st.session_state["selected_stats_requested"] = parsed_stats
-
-        st.rerun()
-
-    if "_nl_parsed_preview" in st.session_state:
-        with st.expander("Parsed intent preview", expanded=False):
-            preview = st.session_state["_nl_parsed_preview"]
-            if preview.get("warnings"):
-                st.warning(" | ".join(preview["warnings"]))
-            st.json(preview)
+        if "_nl_parsed_preview" in st.session_state:
+            with st.expander("Parsed intent preview", expanded=False):
+                preview = st.session_state["_nl_parsed_preview"]
+                if preview.get("warnings"):
+                    st.warning(" | ".join(preview["warnings"]))
+                st.json(preview)
 
     # Batter-only MVP: keep pitcher code paths in place but unreachable in UI.
     player_type = DEFAULT_PLAYER_TYPE
@@ -599,6 +610,9 @@ with st.sidebar:
 
     st.divider()
     st.caption("Data via pybaseball / Baseball Savant")
+
+    with st.expander("Experimental", expanded=False):
+        st.checkbox("Enable query input", key="enable_query_input")
 
 
 # ---------------------------------------------------------------------------
