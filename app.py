@@ -11,6 +11,7 @@ from stats.percentiles import (
     get_all_color_tiers,
     get_all_percentiles,
 )
+from stats.nl_query import extract_last_year, parse_nl_query
 from stats.filters import (
     FILTER_REGISTRY,
     apply_filters,
@@ -23,6 +24,7 @@ from ui.components import (
     percentile_bar_chart,
     player_header,
     split_table,
+    stat_card,
     stat_cards_row,
 )
 from ui.glossary import render_glossary
@@ -38,6 +40,8 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 
 SEASONS = [2025, 2024, 2023, 2022]
+FEATURE_PITCHERS = False
+DEFAULT_PLAYER_TYPE = "Batter"
 
 SPLIT_TYPE_MAP = {
     "vs. Handedness (L/R)": "hand",
@@ -65,6 +69,38 @@ _INT_TO_MONTH = {v: k for k, v in _MONTH_TO_INT.items()}
 _BALLS_OPTS   = ["any", "0", "1", "2", "3"]
 _STRIKES_OPTS = ["any", "0", "1", "2"]
 _DELTA_DECIMALS = {"wOBA": 3, "xwOBA": 3, "K%": 1, "BB%": 1, "HardHit%": 1, "Barrel%": 1}
+_GRID_COLS_PER_ROW = 3
+_DELTA_TILE_CSS = """
+<style>
+.delta-card {{
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 14px 10px 12px;
+    text-align: center;
+    background: #1e2029;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}}
+.delta-label {{
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.55);
+    margin-bottom: 6px;
+}}
+.delta-value {{
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.1;
+}}
+</style>
+"""
+_DELTA_TILE_HTML = """
+<div class="delta-card">
+  <div class="delta-label">{label}</div>
+  <div class="delta-value" style="color:{value_color};">{value}</div>
+</div>
+"""
 
 
 def _make_type_change_cb(row_id: str):
@@ -82,11 +118,11 @@ def _make_type_change_cb(row_id: str):
 
 
 def _sample_size_text(sample_sizes: dict[str, int | None]) -> str:
-    parts = [f"N_pitches: {sample_sizes['N_pitches']:,}"]
+    parts = [f"Pitches: {sample_sizes['N_pitches']:,}"]
     if sample_sizes["N_BIP"] is not None:
-        parts.append(f"N_BIP: {sample_sizes['N_BIP']:,}")
+        parts.append(f"Balls in play: {sample_sizes['N_BIP']:,}")
     if sample_sizes["approx_PA"] is not None:
-        parts.append(f"Approx PA: {sample_sizes['approx_PA']:,}")
+        parts.append(f"Approx. PA: {sample_sizes['approx_PA']:,}")
     return " | ".join(parts)
 
 
@@ -97,6 +133,75 @@ def _delta_text(stat: str, a_val: float | None, b_val: float | None) -> str:
     return f"{(a_val - b_val):+.{decimals}f}"
 
 
+def _delta_value(a_val: float | None, b_val: float | None) -> float | None:
+    if a_val is None or b_val is None:
+        return None
+    return a_val - b_val
+
+
+def _chunk_stats(stats_order: list[str], chunk_size: int = _GRID_COLS_PER_ROW) -> list[list[str]]:
+    return [stats_order[i:i + chunk_size] for i in range(0, len(stats_order), chunk_size)]
+
+
+def _render_player_stat_grid(
+    stat_values: dict[str, float | None],
+    percentiles: dict[str, float],
+    color_tiers: dict[str, dict[str, str]],
+    stats_order: list[str],
+) -> None:
+    if not stats_order:
+        st.info("No stats selected.")
+        return
+
+    for stat_row in _chunk_stats(stats_order):
+        row_cols = st.columns(_GRID_COLS_PER_ROW)
+        for col_idx in range(_GRID_COLS_PER_ROW):
+            with row_cols[col_idx]:
+                if col_idx < len(stat_row):
+                    stat = stat_row[col_idx]
+                    stat_card(
+                        label=stat,
+                        value=stat_values.get(stat),
+                        percentile=percentiles.get(stat),
+                        color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
+                    )
+                else:
+                    st.empty()
+
+
+def _render_delta_stat_grid(
+    stats_order: list[str],
+    player_stats_a: dict[str, float | None],
+    player_stats_b: dict[str, float | None],
+) -> None:
+    if not stats_order:
+        st.info("No stats selected.")
+        return
+
+    for stat_row in _chunk_stats(stats_order):
+        row_cols = st.columns(_GRID_COLS_PER_ROW)
+        for col_idx in range(_GRID_COLS_PER_ROW):
+            with row_cols[col_idx]:
+                if col_idx < len(stat_row):
+                    stat = stat_row[col_idx]
+                    delta_val = _delta_value(player_stats_a.get(stat), player_stats_b.get(stat))
+                    delta_str = _delta_text(stat, player_stats_a.get(stat), player_stats_b.get(stat))
+                    value_color = "#95A5A6"
+                    if delta_val is not None:
+                        if delta_val > 0:
+                            value_color = "#2ECC71"
+                        elif delta_val < 0:
+                            value_color = "#E74C3C"
+
+                    st.markdown(
+                        _DELTA_TILE_CSS
+                        + _DELTA_TILE_HTML.format(label=stat, value=delta_str, value_color=value_color),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.empty()
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -105,9 +210,92 @@ with st.sidebar:
     st.title("⚾ MLB Splits")
     st.divider()
 
-    player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
+    if "season_selectbox" not in st.session_state:
+        st.session_state["season_selectbox"] = SEASONS[0]
 
-    season = st.selectbox("Season", options=SEASONS, index=0)
+    with st.form("nl_query_form"):
+        st.text_input("Type a query…", key="nl_query_input")
+        nl_run = st.form_submit_button("Run", use_container_width=True)
+
+    if nl_run:
+        raw_query = st.session_state.get("nl_query_input", "").strip()
+        if not raw_query:
+            st.session_state["_nl_parsed_preview"] = {
+                "raw_query": "",
+                "cleaned_query": "",
+                "player_a": None,
+                "player_b": None,
+                "comparison_mode": False,
+                "season": None,
+                "selected_stats": [],
+                "filter_rows": [],
+                "warnings": ["Query is empty. Enter a player-oriented query and try again."],
+            }
+            st.rerun()
+
+        parsed_year = extract_last_year(raw_query)
+        lookup_season = parsed_year if parsed_year in SEASONS else st.session_state["season_selectbox"]
+
+        with st.spinner("Parsing query…"):
+            lookup_df = get_batting_stats(lookup_season)
+
+        lookup_player_names = sorted(
+            lookup_df["Name"].dropna().unique().tolist(),
+            key=lambda n: n.split()[-1],
+        )
+        parsed_intent = parse_nl_query(
+            raw_query,
+            lookup_player_names,
+            valid_seasons=set(SEASONS),
+            allowed_stats=CORE_STATS,
+        )
+
+        st.session_state["_nl_parsed_preview"] = parsed_intent
+
+        parsed_season = parsed_intent.get("season")
+        if parsed_season in SEASONS:
+            st.session_state["season_selectbox"] = parsed_season
+
+        parsed_player_a = parsed_intent.get("player_a")
+        if parsed_player_a is not None:
+            st.session_state["player_selectbox"] = parsed_player_a
+
+        parsed_comparison = bool(parsed_intent.get("comparison_mode"))
+        parsed_player_b = parsed_intent.get("player_b")
+        if parsed_comparison:
+            st.session_state["comparison_mode"] = True
+            st.session_state["player_b_selectbox"] = parsed_player_b
+        else:
+            st.session_state["comparison_mode"] = False
+            st.session_state["player_b_selectbox"] = None
+
+        parsed_rows = parsed_intent.get("filter_rows", [])
+        st.session_state["filter_rows"] = parsed_rows
+        st.session_state["_filter_next_id"] = len(parsed_rows)
+
+        parsed_stats = parsed_intent.get("selected_stats", [])
+        if parsed_stats:
+            for stat in CORE_STATS:
+                st.session_state[f"stat_show_{stat}"] = stat in parsed_stats
+            st.session_state["selected_stats_requested"] = parsed_stats
+
+        st.rerun()
+
+    if "_nl_parsed_preview" in st.session_state:
+        with st.expander("Parsed intent preview", expanded=False):
+            preview = st.session_state["_nl_parsed_preview"]
+            if preview.get("warnings"):
+                st.warning(" | ".join(preview["warnings"]))
+            st.json(preview)
+
+    # Batter-only MVP: keep pitcher code paths in place but unreachable in UI.
+    player_type = DEFAULT_PLAYER_TYPE
+    if FEATURE_PITCHERS:
+        player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
+
+    if st.session_state["season_selectbox"] not in SEASONS:
+        st.session_state["season_selectbox"] = SEASONS[0]
+    season = st.selectbox("Season", options=SEASONS, key="season_selectbox")
 
     split_type_label = st.radio("Split", list(SPLIT_TYPE_MAP.keys()))
     split_type = SPLIT_TYPE_MAP[split_type_label]
@@ -524,23 +712,21 @@ else:
 
 st.subheader("Season Stats")
 if comparison_mode and player_stats_b is not None and percentiles_b is not None and color_tiers_b is not None:
-    st.caption(f"Sample size A ({selected_name}): {_sample_size_text(sample_sizes)}")
-    st.caption(f"Sample size B ({selected_name_b}): {_sample_size_text(sample_sizes_b)}")
-
     col_a, col_b, col_delta = st.columns(3)
     with col_a:
-        st.caption(f"Player A: {selected_name}")
-        stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
+        st.markdown(f"**{selected_name}**")
+        st.caption(_sample_size_text(sample_sizes))
+        _render_player_stat_grid(player_stats, percentiles, color_tiers, selected_stats)
     with col_b:
-        st.caption(f"Player B: {selected_name_b}")
-        stat_cards_row(player_stats_b, percentiles_b, color_tiers_b, stats_order=selected_stats)
+        st.markdown(f"**{selected_name_b}**")
+        st.caption(_sample_size_text(sample_sizes_b))
+        _render_player_stat_grid(player_stats_b, percentiles_b, color_tiers_b, selected_stats)
     with col_delta:
-        st.caption("Delta (A - B)")
-        if not selected_stats:
-            st.info("No stats selected.")
-        else:
-            for stat in selected_stats:
-                st.metric(stat, _delta_text(stat, player_stats.get(stat), player_stats_b.get(stat)))
+        st.markdown(f"**Difference ({selected_name} minus {selected_name_b})**")
+        st.caption(
+            f"Positive means {selected_name} is higher; negative means {selected_name_b} is higher."
+        )
+        _render_delta_stat_grid(selected_stats, player_stats, player_stats_b)
 else:
     st.caption(f"Sample size: {_sample_size_text(sample_sizes)}")
     stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)

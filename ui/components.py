@@ -214,12 +214,7 @@ def percentile_bar_chart(
                 textposition="outside",
                 cliponaxis=False,
                 showlegend=False,
-                hovertemplate=(
-                    f"<b>{row['stat']}</b><br>"
-                    f"Percentile: {row['percentile']:.0f}th<br>"
-                    f"Value: {row['label'].split('(')[0].strip()}"
-                    "<extra></extra>"
-                ),
+                hoverinfo="skip",
             )
         )
 
@@ -242,7 +237,11 @@ def percentile_bar_chart(
     # League-average reference line at 50th
     fig.add_vline(x=50, line_dash="dot", line_color="rgba(128,128,128,0.5)", line_width=1)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
 
 
 # ---------------------------------------------------------------------------
