@@ -14,6 +14,7 @@ from ui.components import (
     format_percentile,
     build_chart_df,
     _build_trend_tidy_df,
+    _filter_real_data_rows,
     _ORDERED_STATS,
 )
 
@@ -177,3 +178,16 @@ def test_build_trend_tidy_df_includes_stat_key_schema():
     required = {"year", "stat_key", "value", "n_pitches", "approx_pa", "n_bip"}
     assert required.issubset(df.columns)
     assert df.iloc[0]["stat_key"] == "xwOBA"
+
+
+def test_filter_real_data_rows_keeps_only_non_null_with_pitches():
+    df = pd.DataFrame(
+        [
+            {"year": 2019, "value": None, "n_pitches": 0},
+            {"year": 2020, "value": 0.312, "n_pitches": 300},
+            {"year": 2021, "value": 0.325, "n_pitches": 0},
+            {"year": 2022, "value": 0.340, "n_pitches": 420},
+        ]
+    )
+    filtered = _filter_real_data_rows(df)
+    assert filtered["year"].tolist() == [2020, 2022]

@@ -1,5 +1,7 @@
 """Data fetching layer — wraps pybaseball with Streamlit caching."""
 
+import datetime as dt
+
 import streamlit as st
 import pybaseball as pb
 import pandas as pd
@@ -32,6 +34,21 @@ STATCAST_KEEP_COLS = [
     "balls",             # ball count at time of pitch (0–3)
     "strikes",           # strike count at time of pitch (0–2)
 ]
+_BATTING_BASE_COLS = ["IDfg", "Name", "Team", "PA", "Season"]
+
+
+def _last_completed_season_year() -> int:
+    """Return the most recent season that should have stable full-year stats."""
+    return dt.date.today().year - 1
+
+
+def _empty_batting_stats_df(season: int, reason: str | None = None) -> pd.DataFrame:
+    cols = _BATTING_BASE_COLS + CORE_STAT_COLS
+    df = pd.DataFrame(columns=cols)
+    df.attrs["season"] = int(season)
+    if reason:
+        df.attrs["warning"] = reason
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -40,9 +57,21 @@ STATCAST_KEEP_COLS = [
 
 def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
     """Return FanGraphs season batting stats for all qualified batters."""
+    season_int = int(season)
+    if season_int > _last_completed_season_year():
+        return _empty_batting_stats_df(
+            season_int,
+            reason=f"No batting stats available for {season_int} yet.",
+        )
+
     pb.cache.enable()
-    df = pb.batting_stats(season, qual=min_pa)
-    return df
+    try:
+        return pb.batting_stats(season_int, qual=min_pa)
+    except Exception:
+        return _empty_batting_stats_df(
+            season_int,
+            reason=f"No batting stats available for {season_int} yet.",
+        )
 
 
 def _fetch_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
