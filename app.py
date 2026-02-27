@@ -58,6 +58,7 @@ SPLIT_TYPE_MAP = {
 }
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+_DEFAULT_STATS = CORE_STATS.copy()  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 
 
@@ -248,7 +249,7 @@ with st.sidebar:
     if st.session_state["enable_query_input"]:
         with st.form("nl_query_form"):
             st.text_area("Type a query…", key="nl_query_input", height=100)
-            nl_run = st.form_submit_button("Run", use_container_width=True)
+            nl_run = st.form_submit_button("Run", width="stretch")
 
         if nl_run:
             raw_query = st.session_state.get("nl_query_input", "").strip()
@@ -336,80 +337,23 @@ with st.sidebar:
     if FEATURE_PITCHERS:
         player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True)
 
+    # ── Season & split ────────────────────────────────────────────────────────
     if st.session_state["season_a"] not in SEASONS:
         st.session_state["season_a"] = DEFAULT_SEASON
     season_a = st.selectbox("Season", options=SEASONS, key="season_a")
     if st.session_state.get("link_seasons", True):
         st.session_state["season_b"] = season_a
 
-    split_type_label = st.radio("Split", list(SPLIT_TYPE_MAP.keys()))
+    split_type_label = st.radio(
+        "Split",
+        list(SPLIT_TYPE_MAP.keys()),
+        help="Sets the rows in the splits table. Use Filters to narrow which pitches are counted for all rows.",
+    )
     split_type = SPLIT_TYPE_MAP[split_type_label]
-    comparison_mode = st.checkbox("Comparison mode", key="comparison_mode")
-
-    # Per-side season state — allows cross-year comparison (e.g. 2025 A vs 2024 B).
-    if comparison_mode:
-        link_seasons = st.checkbox(
-            "Link seasons",
-            key="link_seasons",
-            help="Unlink to compare players across different seasons",
-        )
-        if link_seasons:
-            st.session_state["season_b"] = season_a
-        else:
-            if st.session_state.get("season_b") not in STATCAST_SEASONS:
-                st.session_state["season_b"] = season_a
-            st.selectbox("Season B", STATCAST_SEASONS, key="season_b")
-    else:
-        link_seasons = True
-        st.session_state["link_seasons"] = True
-        st.session_state["season_b"] = season_a
-
-    season_b = st.session_state["season_b"]
-
-    if "selected_stats_requested" not in st.session_state:
-        st.session_state["selected_stats_requested"] = CORE_STATS.copy()
-
-    with st.expander("Stats to show", expanded=False):
-        for stat in CORE_STATS:
-            k = f"stat_show_{stat}"
-            if k not in st.session_state:
-                st.session_state[k] = stat in st.session_state["selected_stats_requested"]
-
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
-        with btn_col1:
-            if st.button("Reset", key="stats_reset_defaults", use_container_width=True):
-                for stat in CORE_STATS:
-                    st.session_state[f"stat_show_{stat}"] = True
-                st.rerun()
-        with btn_col2:
-            if st.button("All", key="stats_select_all", use_container_width=True):
-                for stat in CORE_STATS:
-                    st.session_state[f"stat_show_{stat}"] = True
-                st.rerun()
-        with btn_col3:
-            if st.button("None", key="stats_select_none", use_container_width=True):
-                for stat in CORE_STATS:
-                    st.session_state[f"stat_show_{stat}"] = False
-                st.rerun()
-
-        selected_count = sum(
-            1 for stat in CORE_STATS if st.session_state.get(f"stat_show_{stat}", False)
-        )
-        st.caption(f"Showing {selected_count} stats")
-
-        cols = st.columns(2)
-        for i, stat in enumerate(CORE_STATS):
-            with cols[i % 2]:
-                st.checkbox(stat, key=f"stat_show_{stat}")
-
-    selected_stats_requested = [
-        stat for stat in CORE_STATS
-        if st.session_state.get(f"stat_show_{stat}", False)
-    ]
-    st.session_state["selected_stats_requested"] = selected_stats_requested
 
     st.divider()
 
+    # ── Player list load ──────────────────────────────────────────────────────
     with st.spinner("Loading player list…"):
         season_df = get_batting_stats(season_a)
     if season_df.empty and season_df.attrs.get("warning"):
@@ -418,6 +362,7 @@ with st.sidebar:
     player_names = sorted(season_df["Name"].dropna().unique().tolist(), key=lambda n: n.split()[-1])
     season_df_b_fg = season_df  # default; overridden below for unlinked cross-year mode
 
+    # ── Player A ──────────────────────────────────────────────────────────────
     # Preserve the selected player across season changes.
     # If they didn't qualify this season (< 50 PA), inject their name so the
     # widget keeps showing it; a warning is surfaced below and in the main area.
@@ -445,12 +390,30 @@ with st.sidebar:
         st.warning(f"No MLB Statcast data for {selected_name} in {season_a}.")
 
     if selected_name is not None:
-        if st.button("Clear player", use_container_width=True):
+        if st.button("Clear player", width="stretch"):
             st.session_state["_clear_player_pending"] = True
             st.rerun()
 
+    # ── Comparison mode + Player B ────────────────────────────────────────────
+    comparison_mode = st.checkbox("Comparison mode", key="comparison_mode")
+
     selected_name_b = None
     if comparison_mode:
+        # Per-side season state — allows cross-year comparison (e.g. 2025 A vs 2024 B).
+        link_seasons = st.checkbox(
+            "Link seasons",
+            key="link_seasons",
+            help="Unlink to compare players across different seasons",
+        )
+        if link_seasons:
+            st.session_state["season_b"] = season_a
+        else:
+            if st.session_state.get("season_b") not in STATCAST_SEASONS:
+                st.session_state["season_b"] = season_a
+            st.selectbox("Season B", STATCAST_SEASONS, key="season_b")
+
+        season_b = st.session_state["season_b"]
+
         if st.session_state.pop("_clear_player_b_pending", False):
             st.session_state["player_b_selectbox"] = None
 
@@ -487,17 +450,68 @@ with st.sidebar:
             st.warning(f"No MLB Statcast data for {selected_name_b} in {season_b}.")
 
         if selected_name_b is not None:
-            if st.button("Clear player B", use_container_width=True):
+            if st.button("Clear player B", width="stretch"):
                 st.session_state["_clear_player_b_pending"] = True
                 st.rerun()
+    else:
+        link_seasons = True
+        st.session_state["link_seasons"] = True
+        st.session_state["season_b"] = season_a
+        season_b = season_a
 
+    # ── Stats to show ─────────────────────────────────────────────────────────
+    if "selected_stats_requested" not in st.session_state:
+        st.session_state["selected_stats_requested"] = CORE_STATS.copy()
+
+    _selected_count = sum(
+        1 for stat in CORE_STATS if st.session_state.get(f"stat_show_{stat}", True)
+    )
+    with st.expander(f"Stats to show ({_selected_count}/{len(CORE_STATS)})", expanded=False):
+        for stat in CORE_STATS:
+            k = f"stat_show_{stat}"
+            if k not in st.session_state:
+                st.session_state[k] = stat in st.session_state["selected_stats_requested"]
+
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        with btn_col1:
+            if st.button("Reset", key="stats_reset_defaults", width="stretch",
+                         help="Restore default stats"):
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = stat in _DEFAULT_STATS
+                st.rerun()
+        with btn_col2:
+            if st.button("All", key="stats_select_all", width="stretch",
+                         help="Enable all stats"):
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = True
+                st.rerun()
+        with btn_col3:
+            if st.button("None", key="stats_select_none", width="stretch"):
+                for stat in CORE_STATS:
+                    st.session_state[f"stat_show_{stat}"] = False
+                st.rerun()
+
+        cols = st.columns(2)
+        for i, stat in enumerate(CORE_STATS):
+            with cols[i % 2]:
+                st.checkbox(stat, key=f"stat_show_{stat}")
+
+    selected_stats_requested = [
+        stat for stat in CORE_STATS
+        if st.session_state.get(f"stat_show_{stat}", False)
+    ]
+    st.session_state["selected_stats_requested"] = selected_stats_requested
+
+    # ── Filters ───────────────────────────────────────────────────────────────
     # --- filter row session state init ---
     if "filter_rows" not in st.session_state:
         st.session_state["filter_rows"] = []
     if "_filter_next_id" not in st.session_state:
         st.session_state["_filter_next_id"] = 0
 
-    with st.expander("Filters"):
+    _n_filters = len(st.session_state["filter_rows"])
+    _filter_label = f"Filters ({_n_filters} active)" if _n_filters > 0 else "Filters"
+    with st.expander(_filter_label, expanded=False):
         if st.button("+ Add filter", key="filter_add"):
             new_id = f"f{st.session_state['_filter_next_id']}"
             st.session_state["_filter_next_id"] += 1
@@ -630,10 +644,7 @@ if selected_name is None:
     render_glossary()
     st.stop()
 
-if comparison_mode and selected_name_b is None:
-    st.info("Select **Player B** in the sidebar to compare two players.")
-    render_glossary()
-    st.stop()
+_comparison_incomplete = comparison_mode and selected_name_b is None
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +671,7 @@ if mlbam_id is None:
 
 team_b = None
 mlbam_id_b = None
-if comparison_mode:
+if comparison_mode and selected_name_b is not None:
     player_row_b = get_player_row(season_df_b_fg, selected_name_b)
     if player_row_b is None:
         st.warning(
@@ -791,6 +802,9 @@ else:
 if player_type == "Pitcher":
     st.warning("Pitcher splits are coming in a future update. Showing batter stats.")
 
+if _comparison_incomplete:
+    st.info("⬅ Select **Player B** in the sidebar to compare two players.")
+
 st.divider()
 
 
@@ -850,6 +864,7 @@ st.divider()
 # Split table
 # ---------------------------------------------------------------------------
 
+st.caption("Split type = table rows. Filters = data pool for each row.")
 st.subheader(f"Splits: {split_type_label}")
 
 if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
@@ -950,42 +965,60 @@ with st.expander("Player Trend by Year", expanded=False):
 
     apply_trend_filters = st.checkbox(
         "Apply current filters to each year",
-        value=True,
+        value=False,
         key="trend_apply_filters",
     )
 
-    trend_filters = filters if apply_trend_filters else SplitFilters()
-    with st.spinner("Loading trend data… (first load may take ~30s)"):
-        trend_data_a = get_trend_stats(
-            mlbam_id,
-            trend_seasons_a,
-            player_type,
-            trend_filters,
-            get_statcast_batter,
-            prepared_cache,
-        )
-        trend_data_b_trend = None
-        if comparison_mode and mlbam_id_b is not None:
-            trend_data_b_trend = get_trend_stats(
-                mlbam_id_b,
-                trend_seasons_b,
+    # Guard: only fetch/render when user explicitly requests it.
+    # This prevents N Statcast API calls on every rerun while the expander is collapsed.
+    # The context key captures the current player+season combo; when it changes the
+    # "Load" button re-appears so stale data is never shown silently.
+    _trend_ctx = (
+        int(mlbam_id),
+        int(season_a),
+        int(mlbam_id_b) if (comparison_mode and mlbam_id_b is not None) else None,
+        int(season_b) if comparison_mode else int(season_a),
+    )
+    _loaded_trend_ctx = st.session_state.get("_trend_loaded_key")
+
+    if _trend_ctx != _loaded_trend_ctx:
+        st.info("Click **Load trend data** to fetch yearly stats.")
+        if st.button("Load trend data", key="trend_load_btn"):
+            st.session_state["_trend_loaded_key"] = _trend_ctx
+            st.rerun()
+    else:
+        trend_filters = filters if apply_trend_filters else SplitFilters()
+        with st.spinner("Loading trend data…"):
+            trend_data_a = get_trend_stats(
+                mlbam_id,
+                trend_seasons_a,
                 player_type,
                 trend_filters,
                 get_statcast_batter,
                 prepared_cache,
             )
+            trend_data_b_trend = None
+            if comparison_mode and mlbam_id_b is not None:
+                trend_data_b_trend = get_trend_stats(
+                    mlbam_id_b,
+                    trend_seasons_b,
+                    player_type,
+                    trend_filters,
+                    get_statcast_batter,
+                    prepared_cache,
+                )
 
-    render_trend_section(
-        trend_data_a=trend_data_a,
-        selected_stats=available_trend_stats,
-        selected_stat=selected_trend_stat,
-        year_range=trend_year_range,
-        player_label_a=selected_name,
-        trend_data_b=trend_data_b_trend,
-        player_label_b=selected_name_b if comparison_mode else None,
-        apply_filters_to_each_year=apply_trend_filters,
-        active_filter_summary=active_filter_summary,
-    )
+        render_trend_section(
+            trend_data_a=trend_data_a,
+            selected_stats=available_trend_stats,
+            selected_stat=selected_trend_stat,
+            year_range=trend_year_range,
+            player_label_a=selected_name,
+            trend_data_b=trend_data_b_trend,
+            player_label_b=selected_name_b if comparison_mode else None,
+            apply_filters_to_each_year=apply_trend_filters,
+            active_filter_summary=active_filter_summary,
+        )
 
 st.divider()
 
