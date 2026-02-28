@@ -114,13 +114,14 @@ _OUTCOME_SYMBOLS: dict[str, str] = {
     "Swinging Strike": "x",
     "Foul": "triangle-up",
     "In Play": "square",
+    "HBP": "star",
     "Other": "diamond",
 }
-_OUTCOME_ORDER = ["Ball", "Called Strike", "Swinging Strike", "Foul", "In Play", "Other"]
+_OUTCOME_ORDER = ["Ball", "Called Strike", "Swinging Strike", "Foul", "In Play", "HBP", "Other"]
 _OUTCOME_LEGEND_HTML = (
     '<p style="font-size:12px;color:rgba(255,255,255,0.60);margin:2px 0 6px 0;">'
     "○ Ball &nbsp;·&nbsp; ● Called Strike &nbsp;·&nbsp; ✕ Swinging Strike"
-    " &nbsp;·&nbsp; ▲ Foul &nbsp;·&nbsp; ■ In Play"
+    " &nbsp;·&nbsp; ▲ Foul &nbsp;·&nbsp; ■ In Play &nbsp;·&nbsp; ★ HBP"
     "</p>"
 )
 
@@ -584,6 +585,8 @@ def _bucket_outcome(description: str) -> str:
         return "Ball"
     if desc.startswith("hit_into_play"):
         return "In Play"
+    if desc == "hit_by_pitch":
+        return "HBP"
     return "Other"
 
 
@@ -629,11 +632,11 @@ def _build_zone_chart(
     else:
         work["pitch_type"] = "UNK"
     if "description" in work.columns:
-        outcomes = work["description"].fillna("").map(_derive_outcome_fields)
+        work["outcome_bucket"] = work["description"].fillna("").map(_bucket_outcome)
     else:
-        outcomes = pd.Series([_derive_outcome_fields("")] * len(work), index=work.index)
-    work["outcome_bucket"] = outcomes.map(lambda x: x[0])
-    work["bs_bucket"] = outcomes.map(lambda x: x[1])
+        work["outcome_bucket"] = "Other"
+    work["outcome_bucket"] = work["outcome_bucket"].astype(str).str.strip()
+    work["bs_bucket"] = work["outcome_bucket"].map(_ball_strike_bucket)
     if selected_outcomes is not None:
         allowed = {str(outcome) for outcome in selected_outcomes}
         work = work[work["outcome_bucket"].isin(allowed)].copy()
@@ -747,6 +750,8 @@ def _build_zone_chart(
             if encode_outcomes
             else "circle"
         )
+        if __debug__ and encode_outcomes and (pitch_df["outcome_bucket"] == "Ball").any():
+            assert "circle-open" in marker_symbols
         fig.add_trace(
             go.Scattergl(
                 x=pitch_df["plate_x"],
@@ -760,6 +765,7 @@ def _build_zone_chart(
                     symbol=marker_symbols,
                     color=pitch_color,
                     opacity=0.75,
+                    line=dict(width=1.5, color=pitch_color),
                 ),
                 customdata=customdata,
                 hovertemplate="<br>".join(hover_lines) + "<extra></extra>",
@@ -849,11 +855,11 @@ def render_pitch_movement_chart(
     else:
         work["pitch_type"] = "UNK"
     if "description" in work.columns:
-        outcomes = work["description"].fillna("").map(_derive_outcome_fields)
+        work["outcome_bucket"] = work["description"].fillna("").map(_bucket_outcome)
     else:
-        outcomes = pd.Series([_derive_outcome_fields("")] * len(work), index=work.index)
-    work["outcome_bucket"] = outcomes.map(lambda x: x[0])
-    work["bs_bucket"] = outcomes.map(lambda x: x[1])
+        work["outcome_bucket"] = "Other"
+    work["outcome_bucket"] = work["outcome_bucket"].astype(str).str.strip()
+    work["bs_bucket"] = work["outcome_bucket"].map(_ball_strike_bucket)
 
     x_vals = work["pfx_x"].to_numpy(copy=True)
     y_vals = work["pfx_z"].to_numpy(copy=True)
@@ -1036,7 +1042,7 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
         with hand_col:
             st.caption("Batter hand")
             batter_hand = st.radio(
-                "",
+                "Batter hand",
                 options=["All", "vs LHB", "vs RHB"],
                 horizontal=True,
                 key="pitch_zone_batter_hand",
