@@ -7,6 +7,7 @@ require a live runtime and are exercised via manual smoke test in Phase 7.
 import math
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import pytest
 
 from ui.components import (
@@ -14,7 +15,11 @@ from ui.components import (
     format_percentile,
     build_chart_df,
     _build_trend_tidy_df,
+    _build_single_stat_chart,
     _filter_real_data_rows,
+    _stat_formatter,
+    _stats_share_scale,
+    _add_trend_traces,
     _ORDERED_STATS,
     _SPLIT_TABLE_FORMAT,
     _SPLIT_TABLE_HELP,
@@ -194,6 +199,64 @@ def test_filter_real_data_rows_keeps_only_non_null_with_pitches():
     )
     filtered = _filter_real_data_rows(df)
     assert filtered["year"].tolist() == [2020, 2022]
+
+
+def test_stat_formatter_uses_registry_for_decimal_stats():
+    assert _stat_formatter("wOBA") == "decimal_3"
+
+
+def test_stat_formatter_pitcher_only_fallback_is_pct():
+    assert _stat_formatter("CSW%") == "pct_1"
+    assert _stat_formatter("K-BB%") == "pct_1"
+
+
+def test_stats_share_scale_detects_mixed_scales():
+    assert _stats_share_scale(["wOBA", "K%"]) is False
+    assert _stats_share_scale(["K%", "BB%"]) is True
+
+
+def test_add_trend_traces_creates_open_marker_trace_for_low_sample():
+    fig = go.Figure()
+    stat_df = pd.DataFrame(
+        [
+            {"year": 2022, "value": 25.0, "approx_pa": 120, "n_pitches": 500},
+            {"year": 2023, "value": 23.5, "approx_pa": 40, "n_pitches": 180},
+        ]
+    )
+    has_low = _add_trend_traces(
+        fig=fig,
+        stat_df=stat_df,
+        player_label="Player A",
+        stat_key="K%",
+        color="#4FC3F7",
+        dash="solid",
+        player_type="Batter",
+    )
+    assert has_low is True
+    assert len(fig.data) == 2
+    assert fig.data[0].connectgaps is False
+    assert fig.data[1].mode == "markers"
+    assert fig.data[1].marker.symbol == "circle-open"
+    assert fig.data[1].showlegend is False
+
+
+def test_build_single_stat_chart_contains_low_sample_open_marker_trace():
+    stat_df_a = pd.DataFrame(
+        [
+            {"year": 2022, "value": 24.0, "approx_pa": 90, "n_pitches": 420},
+            {"year": 2023, "value": 21.5, "approx_pa": 35, "n_pitches": 175},
+        ]
+    )
+    fig = _build_single_stat_chart(
+        stat_df_a=stat_df_a,
+        stat_df_b=pd.DataFrame(columns=stat_df_a.columns),
+        stat_key="K%",
+        player_label_a="Player A",
+        player_label_b=None,
+        year_range=(2022, 2023),
+        player_type="Batter",
+    )
+    assert any(getattr(trace.marker, "symbol", None) == "circle-open" for trace in fig.data)
 
 
 def test_split_table_column_help_is_wired():

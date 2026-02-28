@@ -556,6 +556,17 @@ class TestGetTrendStats:
                 f"Missing keys: {self._STAT_KEYS - row.keys()}"
             )
 
+    def test_pitcher_trend_rows_include_pitcher_only_keys(self):
+        stub = self._stub(_make_df(30))
+        result = get_trend_stats(
+            mlbam_id=1, seasons=[2024],
+            player_type="Pitcher", filters=SplitFilters(),
+            fetch_fn=stub, prepare_cache={},
+        )
+        row = result[0]
+        for key in ["CSW%", "Whiff%", "FirstStrike%", "K-BB%"]:
+            assert key in row
+
     def test_empty_df_produces_none_stats(self):
         stub = self._stub(_empty_df())
         result = get_trend_stats(

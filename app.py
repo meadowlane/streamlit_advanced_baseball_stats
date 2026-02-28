@@ -39,7 +39,8 @@ from ui.components import (
     percentile_bar_chart,
     player_header,
     render_pitch_arsenal,
-    render_trend_section,
+    render_trend_custom,
+    render_trend_dashboard,
     split_table,
     stat_card,
     stat_cards_row,
@@ -311,6 +312,7 @@ with st.sidebar:
         st.session_state["player_selectbox"] = None
         st.session_state["player_b_selectbox"] = None
         st.session_state.pop("selected_stats_requested", None)
+        st.session_state.pop("trend_custom_stats", None)
         for stat in CORE_STATS + PITCHER_EXTRA_STATS:
             st.session_state.pop(f"stat_show_{stat}", None)
         st.session_state["filter_rows"] = [
@@ -1177,13 +1179,6 @@ with st.expander("Player Trend by Year", expanded=False):
     trend_control_max = max(season_a, season_b) if comparison_mode else season_a
     trend_seasons_control = sorted(s for s in STATCAST_SEASONS if s <= trend_control_max)
     available_trend_stats = selected_stats if selected_stats else list(STAT_REGISTRY.keys())
-    trend_stat_default = "xwOBA" if "xwOBA" in available_trend_stats else available_trend_stats[0]
-    selected_trend_stat = st.selectbox(
-        "Stat to plot",
-        options=available_trend_stats,
-        index=available_trend_stats.index(trend_stat_default),
-        key="trend_stat_key",
-    )
 
     trend_year_min = trend_seasons_control[0]
     trend_year_max = trend_seasons_control[-1]
@@ -1256,16 +1251,43 @@ with st.expander("Player Trend by Year", expanded=False):
                     prepared_cache,
                 )
 
-        render_trend_section(
-            trend_data_a=trend_data_a,
-            selected_stats=available_trend_stats,
-            selected_stat=selected_trend_stat,
-            year_range=trend_year_range,
-            player_label_a=selected_name,
-            trend_data_b=trend_data_b_trend,
-            player_label_b=selected_name_b if comparison_mode else None,
-            apply_filters_to_each_year=apply_trend_filters,
-            active_filter_summary=active_filter_summary,
-        )
+        trend_tab_dash, trend_tab_custom = st.tabs(["Dashboard", "Custom"])
+
+        with trend_tab_dash:
+            render_trend_dashboard(
+                trend_data_a=trend_data_a,
+                trend_data_b=trend_data_b_trend,
+                player_label_a=selected_name,
+                player_label_b=selected_name_b if comparison_mode else None,
+                year_range=trend_year_range,
+                player_type=player_type,
+                apply_filters_to_each_year=apply_trend_filters,
+                active_filter_summary=active_filter_summary,
+            )
+
+        with trend_tab_custom:
+            if "trend_custom_stats" in st.session_state:
+                st.session_state["trend_custom_stats"] = [
+                    stat for stat in st.session_state["trend_custom_stats"]
+                    if stat in available_trend_stats
+                ]
+            selected_custom_stats = st.multiselect(
+                "Select stats to plot (max 4)",
+                options=available_trend_stats,
+                default=available_trend_stats[:2],
+                key="trend_custom_stats",
+            )
+            render_trend_custom(
+                trend_data_a=trend_data_a,
+                trend_data_b=trend_data_b_trend,
+                player_label_a=selected_name,
+                player_label_b=selected_name_b if comparison_mode else None,
+                year_range=trend_year_range,
+                player_type=player_type,
+                available_stats=available_trend_stats,
+                selected_custom_stats=selected_custom_stats,
+                apply_filters_to_each_year=apply_trend_filters,
+                active_filter_summary=active_filter_summary,
+            )
 
 st.divider()
