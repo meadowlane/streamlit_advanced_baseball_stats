@@ -1,9 +1,11 @@
 import datetime as dt
 
+import pandas as pd
 import streamlit as st
 
 from data.fetcher import (
     get_batting_stats,
+    get_fg_batting_wrc_plus,
     get_pitching_stats,
     get_mlbam_id,
     get_player_row,
@@ -73,10 +75,11 @@ SPLIT_TYPE_MAP = {
 }
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+BATTER_EXTRA_STATS = ["wRC+"]
 PITCHER_CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "K-BB%", "CSW%"]
 PITCHER_SECONDARY_STATS = ["HardHit%", "Barrel%", "GB%", "Whiff%", "FirstStrike%"]
 PITCHER_EXTRA_STATS = [stat for stat in (PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS) if stat not in CORE_STATS]
-_DEFAULT_STATS = CORE_STATS.copy()  # stats shown by default; Reset restores this
+_DEFAULT_STATS = BATTER_EXTRA_STATS + CORE_STATS  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 _PITCHER_STAT_LABELS = {"wOBA": "wOBA Allowed", "xwOBA": "xwOBA Allowed"}
 
@@ -109,6 +112,7 @@ _DELTA_DECIMALS = {
     "Whiff%": 1,
     "FirstStrike%": 1,
     "K-BB%": 1,
+    "wRC+": 0,
 }
 _GRID_COLS_PER_ROW = 3
 _DELTA_TILE_CSS = """
@@ -171,6 +175,82 @@ def _make_type_change_cb(row_id: str):
 
 def _appearance_label(player_type: str) -> str:
     return "Approx. BF" if player_type == "Pitcher" else "Approx. PA"
+
+
+def _name_team_key(name: object, team: object) -> str:
+    name_str = str(name).strip().lower() if name is not None else ""
+    team_str = str(team).strip().upper() if team is not None else ""
+    return f"{name_str}|{team_str}"
+
+
+def _as_optional_float(value: object) -> float | None:
+    try:
+        parsed = pd.to_numeric(value, errors="coerce")
+    except Exception:
+        return None
+    if pd.isna(parsed):
+        return None
+    return float(parsed)
+
+
+def _merge_batter_wrc_plus(base_df: pd.DataFrame, season: int, context: str) -> pd.DataFrame:
+    """Left-merge cached FanGraphs wRC+ data into a one-season batting table."""
+    out = base_df.copy()
+    if "wRC+" not in out.columns:
+        out["wRC+"] = pd.NA
+    if out.empty:
+        return out
+
+    wrc_df = get_fg_batting_wrc_plus(season)
+    if wrc_df.empty:
+        out["wRC+"] = pd.to_numeric(out["wRC+"], errors="coerce")
+        return out
+
+    out["__season"] = int(season)
+    created_name_key = "name_team_key" not in out.columns
+    if created_name_key:
+        out["name_team_key"] = [_name_team_key(name, team) for name, team in zip(out["Name"], out["Team"], strict=False)]
+
+    work = wrc_df.copy()
+    work["__season"] = pd.to_numeric(work["season"], errors="coerce").fillna(int(season)).astype(int)
+
+    merge_keys: list[str]
+    if (
+        "key_mlbam" in out.columns
+        and "key_mlbam" in work.columns
+        and out["key_mlbam"].notna().any()
+        and work["key_mlbam"].notna().any()
+    ):
+        out["key_mlbam"] = pd.to_numeric(out["key_mlbam"], errors="coerce").astype("Int64")
+        work["key_mlbam"] = pd.to_numeric(work["key_mlbam"], errors="coerce").astype("Int64")
+        merge_keys = ["__season", "key_mlbam"]
+    elif "IDfg" in out.columns and "IDfg" in work.columns:
+        out["IDfg"] = pd.to_numeric(out["IDfg"], errors="coerce")
+        work["IDfg"] = pd.to_numeric(work["IDfg"], errors="coerce")
+        merge_keys = ["__season", "IDfg"]
+    else:
+        merge_keys = ["__season", "name_team_key"]
+        duplicate_keys = int(work["name_team_key"].duplicated(keep=False).sum())
+        if duplicate_keys > 0:
+            print(
+                f"[wRC+] warning: {context} ({season}) has {duplicate_keys} duplicate name/team keys; "
+                "fallback merge may be ambiguous."
+            )
+
+    work = work[merge_keys + ["wRC+"]].drop_duplicates(subset=merge_keys, keep="first")
+    merged = out.merge(work.rename(columns={"wRC+": "__wRC_plus_fg"}), how="left", on=merge_keys)
+    merged["wRC+"] = pd.to_numeric(merged["wRC+"], errors="coerce")
+    merged["__wRC_plus_fg"] = pd.to_numeric(merged["__wRC_plus_fg"], errors="coerce")
+    merged["wRC+"] = merged["wRC+"].fillna(merged["__wRC_plus_fg"])
+
+    unmatched = int(merged["wRC+"].isna().sum())
+    if 0 < unmatched < len(merged):
+        print(f"[wRC+] warning: {context} ({season}) unmatched rows after merge: {unmatched}/{len(merged)}.")
+
+    drop_cols = ["__season", "__wRC_plus_fg"]
+    if created_name_key:
+        drop_cols.append("name_team_key")
+    return merged.drop(columns=drop_cols, errors="ignore")
 
 
 def _sample_size_text(sample_sizes: dict[str, int | None], player_type: str) -> str:
@@ -314,7 +394,7 @@ with st.sidebar:
         st.session_state["player_b_selectbox"] = None
         st.session_state.pop("selected_stats_requested", None)
         st.session_state.pop("trend_custom_stats", None)
-        for stat in CORE_STATS + PITCHER_EXTRA_STATS:
+        for stat in CORE_STATS + BATTER_EXTRA_STATS + PITCHER_EXTRA_STATS:
             st.session_state.pop(f"stat_show_{stat}", None)
         st.session_state["filter_rows"] = [
             row for row in st.session_state.get("filter_rows", [])
@@ -430,6 +510,8 @@ with st.sidebar:
             if player_type == "Batter"
             else get_pitching_stats(season_a)
         )
+    if player_type == "Batter":
+        season_df = _merge_batter_wrc_plus(season_df, season_a, context="Player A")
     if season_df.empty and season_df.attrs.get("warning"):
         st.warning(str(season_df.attrs["warning"]))
 
@@ -499,6 +581,8 @@ with st.sidebar:
                     if player_type == "Batter"
                     else get_pitching_stats(season_b)
                 )
+                if player_type == "Batter":
+                    season_df_b_fg = _merge_batter_wrc_plus(season_df_b_fg, season_b, context="Player B")
             if season_df_b_fg.empty and season_df_b_fg.attrs.get("warning"):
                 st.warning(str(season_df_b_fg.attrs["warning"]))
             player_b_names = sorted(
@@ -541,7 +625,7 @@ with st.sidebar:
     stats_catalog = (
         PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS
         if player_type == "Pitcher"
-        else CORE_STATS
+        else BATTER_EXTRA_STATS + CORE_STATS
     )
     if "selected_stats_requested" not in st.session_state:
         st.session_state["selected_stats_requested"] = stats_catalog.copy()
@@ -797,6 +881,7 @@ if mlbam_id is None:
 
 team_b = None
 mlbam_id_b = None
+player_row_b = None
 if comparison_mode and selected_name_b is not None:
     player_row_b = get_player_row(season_df_b_fg, selected_name_b)
     if player_row_b is None:
@@ -861,6 +946,10 @@ if comparison_mode and statcast_df_b is not None:
     validation_frames.append((selected_name_b, statcast_df_b))
 
 for stat in selected_stats_requested:
+    if stat == "wRC+" and player_type == "Batter":
+        selected_stats.append(stat)
+        continue
+
     if stat in {"K-BB%", "CSW%", "Whiff%", "FirstStrike%"} and player_type == "Pitcher":
         selected_stats.append(stat)
         continue
@@ -894,6 +983,8 @@ if missing_stat_requirements:
 # ---------------------------------------------------------------------------
 
 _raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
+if player_type == "Batter":
+    _raw["wRC+"] = _as_optional_float(player_row.get("wRC+"))
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
 distributions = (
@@ -901,6 +992,10 @@ distributions = (
     if player_type == "Pitcher"
     else build_league_distributions(season_df)
 )
+if player_type == "Batter" and "wRC+" in season_df.columns:
+    wrc_values = pd.to_numeric(season_df["wRC+"], errors="coerce").dropna().to_numpy(dtype=float)
+    if len(wrc_values) > 0:
+        distributions["wRC+"] = wrc_values
 percentiles   = get_all_percentiles(player_stats, distributions, player_type=player_type)
 color_tiers   = get_all_color_tiers(percentiles)
 
@@ -909,6 +1004,8 @@ percentiles_b = None
 color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
+    if player_type == "Batter" and player_row_b is not None:
+        _raw_b["wRC+"] = _as_optional_float(player_row_b.get("wRC+"))
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
@@ -920,6 +1017,10 @@ if comparison_mode and filtered_df_b is not None:
             else distributions
         )
     )
+    if player_type == "Batter" and "wRC+" in season_df_b_fg.columns:
+        wrc_values_b = pd.to_numeric(season_df_b_fg["wRC+"], errors="coerce").dropna().to_numpy(dtype=float)
+        if len(wrc_values_b) > 0:
+            distributions_b["wRC+"] = wrc_values_b
     percentiles_b = get_all_percentiles(player_stats_b, distributions_b, player_type=player_type)
     color_tiers_b = get_all_color_tiers(percentiles_b)
 
@@ -1060,10 +1161,14 @@ if player_type == "Pitcher":
             render_pitch_arsenal(compute_pitch_arsenal(filtered_df_b))
     else:
         render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
-    if FEATURE_PITCH_ZONE:
-        from ui.components import render_pitch_zone_chart
-        render_pitch_zone_chart(filtered_df)
-    st.divider()
+
+if FEATURE_PITCH_ZONE:
+    from ui.components import render_pitch_zone_chart
+
+    _pitch_zone_role = "pitcher" if player_type == "Pitcher" else "batter"
+    render_pitch_zone_chart(filtered_df, role=_pitch_zone_role)
+
+st.divider()
 
 
 # ---------------------------------------------------------------------------

@@ -46,8 +46,19 @@ PITCHER_KEEP_COLS = STATCAST_KEEP_COLS + [
     "pfx_x",     # movement (Slice 5)
     "pfx_z",     # movement (Slice 5)
 ]
+BATTER_KEEP_COLS = STATCAST_KEEP_COLS + [
+    "pitch_type",
+    "release_speed",
+    "plate_x",   # zone
+    "plate_z",   # zone
+    "sz_top",    # zone
+    "sz_bot",    # zone
+    "pfx_x",     # movement (Slice 5)
+    "pfx_z",     # movement (Slice 5)
+]
 _BATTING_BASE_COLS = ["IDfg", "Name", "Team", "PA", "Season"]
 _PITCHING_BASE_COLS = ["IDfg", "Name", "Team", "TBF", "Season"]
+_FG_WRC_PLUS_COLS = ["season", "key_mlbam", "IDfg", "Name", "Team", "name_team_key", "wRC+"]
 
 
 def _last_completed_season_year() -> int:
@@ -96,6 +107,56 @@ def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
         )
 
 
+def _normalize_name_team_key(name: object, team: object) -> str:
+    name_str = str(name).strip().lower() if name is not None else ""
+    team_str = str(team).strip().upper() if team is not None else ""
+    return f"{name_str}|{team_str}"
+
+
+def _empty_fg_wrc_plus_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=_FG_WRC_PLUS_COLS)
+
+
+def _fetch_fg_batting_wrc_plus(season: int) -> pd.DataFrame:
+    """Return a slim FanGraphs batting table with season/player keys + wRC+."""
+    season_int = int(season)
+    if season_int > _last_completed_season_year():
+        return _empty_fg_wrc_plus_df()
+
+    pb.cache.enable()
+    try:
+        df = pb.batting_stats(season_int)
+    except Exception:
+        return _empty_fg_wrc_plus_df()
+
+    if df.empty:
+        return _empty_fg_wrc_plus_df()
+
+    wrc_col = None
+    for candidate in ("wRC+", "wRC_plus", "wrc_plus", "wrcplus"):
+        if candidate in df.columns:
+            wrc_col = candidate
+            break
+    if wrc_col is None:
+        return _empty_fg_wrc_plus_df()
+
+    out = pd.DataFrame(index=df.index)
+    out["season"] = season_int
+    out["key_mlbam"] = (
+        pd.to_numeric(df["key_mlbam"], errors="coerce").astype("Int64")
+        if "key_mlbam" in df.columns
+        else pd.Series(pd.NA, index=df.index, dtype="Int64")
+    )
+    out["IDfg"] = pd.to_numeric(df["IDfg"], errors="coerce") if "IDfg" in df.columns else pd.Series(pd.NA, index=df.index)
+    out["Name"] = df["Name"].astype(str) if "Name" in df.columns else pd.Series("", index=df.index, dtype="string")
+    out["Team"] = df["Team"].astype(str) if "Team" in df.columns else pd.Series("", index=df.index, dtype="string")
+    out["name_team_key"] = [
+        _normalize_name_team_key(name, team) for name, team in zip(out["Name"], out["Team"], strict=False)
+    ]
+    out["wRC+"] = pd.to_numeric(df[wrc_col], errors="coerce")
+    return out[_FG_WRC_PLUS_COLS].copy()
+
+
 def _fetch_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     """Return raw Statcast pitch-level events for one batter for a full season."""
     pb.cache.enable()
@@ -103,7 +164,7 @@ def _fetch_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     end = f"{season}-11-30"
     df = pb.statcast_batter(start, end, player_mlbam_id)
     # Keep only columns that exist in the response (Statcast schema can vary by year)
-    cols = [c for c in STATCAST_KEEP_COLS if c in df.columns]
+    cols = [c for c in BATTER_KEEP_COLS if c in df.columns]
     return df[cols].copy()
 
 
@@ -149,6 +210,12 @@ def _lookup_player(last_name: str, first_name: str = "") -> pd.DataFrame:
 def get_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
     """Cached FanGraphs season batting stats."""
     return _fetch_batting_stats(season, min_pa)
+
+
+@st.cache_data(ttl=_TTL_STATS, show_spinner=False)
+def get_fg_batting_wrc_plus(season: int) -> pd.DataFrame:
+    """Cached slim FanGraphs batting table with season/player keys + wRC+."""
+    return _fetch_fg_batting_wrc_plus(season)
 
 
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)

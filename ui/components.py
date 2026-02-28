@@ -27,6 +27,7 @@ _STAT_FORMAT: dict[str, tuple[str, str]] = {
     "BB%":       (".1f", "%"),
     "HardHit%":  (".1f", "%"),
     "Barrel%":   (".1f", "%"),
+    "wRC+":      (".0f", ""),
     "GB%":       (".1f", "%"),
     "CSW%":      (".1f", "%"),
     "Whiff%":    (".1f", "%"),
@@ -1017,13 +1018,14 @@ PITCH_PRESETS: dict[str, list[str] | None] = {
 }
 
 
-def render_pitch_zone_chart(df: pd.DataFrame) -> None:
+def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
     """Render interactive pitch-location chart with strike-zone overlay."""
     with st.expander("Pitch Location", expanded=False):
         if df.empty:
             st.info("No pitch data available for this selection.")
             return
 
+        is_batter_role = role == "batter"
         viz_df = df.copy()
         has_stand = "stand" in df.columns
         if "pitch_type" in viz_df.columns:
@@ -1040,12 +1042,20 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
                 key="pitch_zone_preset",
             )
         with hand_col:
-            st.caption("Batter hand")
-            batter_hand = st.radio(
-                "Batter hand",
-                options=["All", "vs LHB", "vs RHB"],
+            if is_batter_role:
+                hand_caption = "Pitcher hand"
+                hand_options = ["All", "vs LHP", "vs RHP"]
+                hand_key = "pitch_zone_pitcher_hand"
+            else:
+                hand_caption = "Batter hand"
+                hand_options = ["All", "vs LHB", "vs RHB"]
+                hand_key = "pitch_zone_batter_hand"
+            st.caption(hand_caption)
+            hand_filter = st.radio(
+                hand_caption,
+                options=hand_options,
                 horizontal=True,
-                key="pitch_zone_batter_hand",
+                key=hand_key,
                 label_visibility="collapsed",
             )
 
@@ -1068,7 +1078,7 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
                 key="pitch_zone_max_pitches",
             )
             include_switch = True
-            if has_stand and batter_hand != "All":
+            if (not is_batter_role) and has_stand and hand_filter != "All":
                 include_switch = st.checkbox(
                     "Include switch hitters",
                     value=True,
@@ -1186,14 +1196,23 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
 
         filtered_df = viz_df.copy()
 
-        if has_stand:
-            stand_vals = filtered_df["stand"].fillna("").astype(str).str.upper()
-            if batter_hand == "vs LHB":
-                keep = {"L", "S"} if include_switch else {"L"}
-                filtered_df = filtered_df[stand_vals.isin(keep)].copy()
-            elif batter_hand == "vs RHB":
-                keep = {"R", "S"} if include_switch else {"R"}
-                filtered_df = filtered_df[stand_vals.isin(keep)].copy()
+        if is_batter_role:
+            has_pitcher_throws = "p_throws" in filtered_df.columns
+            if has_pitcher_throws:
+                throws_vals = filtered_df["p_throws"].fillna("").astype(str).str.upper()
+                if hand_filter == "vs LHP":
+                    filtered_df = filtered_df[throws_vals == "L"].copy()
+                elif hand_filter == "vs RHP":
+                    filtered_df = filtered_df[throws_vals == "R"].copy()
+        else:
+            if has_stand:
+                stand_vals = filtered_df["stand"].fillna("").astype(str).str.upper()
+                if hand_filter == "vs LHB":
+                    keep = {"L", "S"} if include_switch else {"L"}
+                    filtered_df = filtered_df[stand_vals.isin(keep)].copy()
+                elif hand_filter == "vs RHB":
+                    keep = {"R", "S"} if include_switch else {"R"}
+                    filtered_df = filtered_df[stand_vals.isin(keep)].copy()
 
         advanced_override = (
             bool(pitch_type_options)
