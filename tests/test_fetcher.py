@@ -5,9 +5,11 @@ import pandas as pd
 import pytest
 
 from data.fetcher import (
+    BATTER_KEEP_COLS,
     CORE_STAT_COLS,
     PITCHER_KEEP_COLS,
     STATCAST_KEEP_COLS,
+    _fetch_fg_batting_wrc_plus,
     _fetch_batting_stats,
     _fetch_pitching_stats,
     _fetch_statcast_batter,
@@ -123,10 +125,53 @@ class TestFetchBattingStats:
 
 
 # ---------------------------------------------------------------------------
+# _fetch_fg_batting_wrc_plus
+# ---------------------------------------------------------------------------
+
+class TestFetchFgBattingWrcPlus:
+    @patch("data.fetcher.pb.batting_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_returns_slim_wrc_plus_table(self, mock_cache, mock_batting):
+        mock_batting.return_value = pd.DataFrame(
+            [
+                {"IDfg": 1001, "Name": "Aaron Judge", "Team": "NYY", "wRC+": 176},
+                {"IDfg": 1002, "Name": "Juan Soto", "Team": "NYY", "wRC+": 181},
+            ]
+        )
+        df = _fetch_fg_batting_wrc_plus(2024)
+
+        assert set(["season", "IDfg", "Name", "Team", "name_team_key", "wRC+"]).issubset(df.columns)
+        assert df["season"].nunique() == 1 and int(df["season"].iloc[0]) == 2024
+        assert pd.api.types.is_numeric_dtype(df["wRC+"])
+        assert df["name_team_key"].iloc[0] == "aaron judge|NYY"
+
+    @patch("data.fetcher.pb.batting_stats", side_effect=RuntimeError("rate limited"))
+    @patch("data.fetcher.pb.cache.enable")
+    def test_batting_stats_error_returns_empty(self, mock_cache, mock_batting):
+        df = _fetch_fg_batting_wrc_plus(2024)
+        assert df.empty
+        mock_cache.assert_called_once()
+        mock_batting.assert_called_once_with(2024)
+
+    @patch("data.fetcher.pb.batting_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_missing_wrc_col_returns_empty(self, mock_cache, mock_batting):
+        mock_batting.return_value = pd.DataFrame([{"IDfg": 1001, "Name": "Aaron Judge", "Team": "NYY"}])
+        df = _fetch_fg_batting_wrc_plus(2024)
+        assert df.empty
+
+
+# ---------------------------------------------------------------------------
 # _fetch_statcast_batter
 # ---------------------------------------------------------------------------
 
 class TestFetchStatcastBatter:
+    def test_batter_keep_cols_is_superset(self):
+        for col in STATCAST_KEEP_COLS:
+            assert col in BATTER_KEEP_COLS
+        for col in ["pitch_type", "release_speed", "plate_x", "plate_z", "sz_top", "sz_bot", "pfx_x", "pfx_z"]:
+            assert col in BATTER_KEEP_COLS
+
     @patch("data.fetcher.pb.statcast_batter")
     @patch("data.fetcher.pb.cache.enable")
     def test_returns_dataframe(self, mock_cache, mock_statcast):
@@ -157,6 +202,23 @@ class TestFetchStatcastBatter:
         mock_statcast.return_value = _make_statcast_df()
         df = _fetch_statcast_batter(660271, 2024)
         assert "inning" in df.columns
+
+    @patch("data.fetcher.pb.statcast_batter")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_fetch_statcast_batter_keeps_pitch_location_cols(self, mock_cache, mock_statcast):
+        full_df = _make_statcast_df()
+        full_df["pitch_type"] = "FF"
+        full_df["release_speed"] = 96.1
+        full_df["plate_x"] = 0.12
+        full_df["plate_z"] = 2.65
+        full_df["sz_top"] = 3.45
+        full_df["sz_bot"] = 1.55
+        full_df["pfx_x"] = -0.35
+        full_df["pfx_z"] = 1.10
+        mock_statcast.return_value = full_df
+        df = _fetch_statcast_batter(660271, 2024)
+        for col in ["pitch_type", "release_speed", "plate_x", "plate_z", "sz_top", "sz_bot", "pfx_x", "pfx_z"]:
+            assert col in df.columns
 
     @patch("data.fetcher.pb.statcast_batter")
     @patch("data.fetcher.pb.cache.enable")
