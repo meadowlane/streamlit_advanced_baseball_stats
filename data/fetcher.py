@@ -99,12 +99,100 @@ def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
 
     pb.cache.enable()
     try:
-        return pb.batting_stats(season_int, qual=min_pa)
+        return _ensure_traditional_slash_stats(pb.batting_stats(season_int, qual=min_pa))
     except Exception:
         return _empty_batting_stats_df(
             season_int,
             reason=f"No batting stats available for {season_int} yet.",
         )
+
+
+def _safe_divide(numer: pd.Series, denom: pd.Series) -> pd.Series:
+    numer_vals = pd.to_numeric(numer, errors="coerce")
+    denom_vals = pd.to_numeric(denom, errors="coerce")
+    return numer_vals.where(denom_vals > 0, float("nan")) / denom_vals.where(denom_vals > 0, float("nan"))
+
+
+def _find_col_case_insensitive(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    lowered = {str(col).strip().lower(): col for col in df.columns}
+    for candidate in candidates:
+        key = str(candidate).strip().lower()
+        if key in lowered:
+            return str(lowered[key])
+    return None
+
+
+def _get_numeric_series(df: pd.DataFrame, candidates: list[str]) -> pd.Series | None:
+    col = _find_col_case_insensitive(df, candidates)
+    if col is None:
+        return None
+    return pd.to_numeric(df[col], errors="coerce")
+
+
+def _ensure_traditional_slash_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure AVG/OBP/SLG/OPS exist in a FanGraphs-style batting DataFrame."""
+    if df.empty:
+        out = df.copy()
+        for stat in ("AVG", "OBP", "SLG", "OPS"):
+            if stat not in out.columns:
+                out[stat] = pd.Series(dtype="float64")
+        return out
+
+    out = df.copy()
+
+    # Map existing columns first (case-insensitive).
+    for stat in ("AVG", "OBP", "SLG", "OPS"):
+        found = _find_col_case_insensitive(out, [stat])
+        if found is not None:
+            out[stat] = pd.to_numeric(out[found], errors="coerce")
+        elif stat not in out.columns:
+            out[stat] = pd.Series(float("nan"), index=out.index, dtype="float64")
+
+    hits = _get_numeric_series(out, ["H", "Hits"])
+    at_bats = _get_numeric_series(out, ["AB", "At Bats", "at_bats"])
+    walks = _get_numeric_series(out, ["BB", "Walks"])
+    doubles = _get_numeric_series(out, ["2B", "Doubles"])
+    triples = _get_numeric_series(out, ["3B", "Triples"])
+    homers = _get_numeric_series(out, ["HR", "Home Runs", "home_runs"])
+
+    # Per requirement: if HBP/SF are missing, treat them as 0 for OBP computation.
+    hbp = _get_numeric_series(out, ["HBP", "Hit By Pitch", "hit_by_pitch"])
+    if hbp is None:
+        hbp = pd.Series(0.0, index=out.index)
+    sf = _get_numeric_series(out, ["SF", "Sacrifice Fly", "sacrifice_fly"])
+    if sf is None:
+        sf = pd.Series(0.0, index=out.index)
+
+    if out["AVG"].isna().any() and hits is not None and at_bats is not None:
+        computed_avg = _safe_divide(hits, at_bats)
+        out["AVG"] = out["AVG"].fillna(computed_avg)
+
+    if out["OBP"].isna().any() and hits is not None and at_bats is not None and walks is not None:
+        obp_numer = hits + walks + hbp
+        obp_denom = at_bats + walks + hbp + sf
+        computed_obp = _safe_divide(obp_numer, obp_denom)
+        out["OBP"] = out["OBP"].fillna(computed_obp)
+
+    if (
+        out["SLG"].isna().any()
+        and hits is not None
+        and at_bats is not None
+        and doubles is not None
+        and triples is not None
+        and homers is not None
+    ):
+        singles = hits - doubles - triples - homers
+        total_bases = singles + (2.0 * doubles) + (3.0 * triples) + (4.0 * homers)
+        computed_slg = _safe_divide(total_bases, at_bats)
+        out["SLG"] = out["SLG"].fillna(computed_slg)
+
+    if out["OPS"].isna().any():
+        obp_vals = pd.to_numeric(out["OBP"], errors="coerce")
+        slg_vals = pd.to_numeric(out["SLG"], errors="coerce")
+        computed_ops = obp_vals + slg_vals
+        out["OPS"] = pd.to_numeric(out["OPS"], errors="coerce").fillna(computed_ops)
+
+    return out
 
 
 def _normalize_name_team_key(name: object, team: object) -> str:

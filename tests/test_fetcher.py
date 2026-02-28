@@ -9,6 +9,7 @@ from data.fetcher import (
     CORE_STAT_COLS,
     PITCHER_KEEP_COLS,
     STATCAST_KEEP_COLS,
+    _ensure_traditional_slash_stats,
     _fetch_fg_batting_wrc_plus,
     _fetch_batting_stats,
     _fetch_pitching_stats,
@@ -122,6 +123,73 @@ class TestFetchBattingStats:
         assert "warning" in df.attrs
         mock_cache.assert_called_once()
         mock_batting.assert_called_once_with(2025, qual=50)
+
+
+# ---------------------------------------------------------------------------
+# _ensure_traditional_slash_stats
+# ---------------------------------------------------------------------------
+
+class TestEnsureTraditionalSlashStats:
+    def test_maps_existing_case_insensitive_columns(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Name": "Test Hitter",
+                    "Team": "AAA",
+                    "avg": 0.280,
+                    "obp": 0.360,
+                    "slg": 0.500,
+                    "ops": 0.860,
+                }
+            ]
+        )
+        out = _ensure_traditional_slash_stats(df)
+        assert float(out.loc[0, "AVG"]) == pytest.approx(0.280, abs=1e-9)
+        assert float(out.loc[0, "OBP"]) == pytest.approx(0.360, abs=1e-9)
+        assert float(out.loc[0, "SLG"]) == pytest.approx(0.500, abs=1e-9)
+        assert float(out.loc[0, "OPS"]) == pytest.approx(0.860, abs=1e-9)
+
+    def test_computes_missing_slash_stats_from_counting_stats(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Name": "Test Hitter",
+                    "Team": "AAA",
+                    "H": 140,
+                    "AB": 500,
+                    "BB": 60,
+                    "2B": 30,
+                    "3B": 5,
+                    "HR": 25,
+                }
+            ]
+        )
+        out = _ensure_traditional_slash_stats(df)
+        assert float(out.loc[0, "AVG"]) == pytest.approx(0.280, abs=1e-9)
+        assert float(out.loc[0, "OBP"]) == pytest.approx((140 + 60) / (500 + 60), abs=1e-9)
+        assert float(out.loc[0, "SLG"]) == pytest.approx(255 / 500, abs=1e-9)
+        assert float(out.loc[0, "OPS"]) == pytest.approx(((140 + 60) / (500 + 60)) + (255 / 500), abs=1e-9)
+
+    def test_zero_denominators_return_nan(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Name": "Test Hitter",
+                    "Team": "AAA",
+                    "H": 0,
+                    "AB": 0,
+                    "BB": 0,
+                    "2B": 0,
+                    "3B": 0,
+                    "HR": 0,
+                }
+            ]
+        )
+        out = _ensure_traditional_slash_stats(df)
+        assert pd.isna(out.loc[0, "AVG"])
+        assert pd.isna(out.loc[0, "OBP"])
+        assert pd.isna(out.loc[0, "SLG"])
+        assert pd.isna(out.loc[0, "OPS"])
 
 
 # ---------------------------------------------------------------------------

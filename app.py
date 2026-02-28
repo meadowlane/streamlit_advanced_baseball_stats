@@ -76,6 +76,7 @@ SPLIT_TYPE_MAP = {
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 BATTER_EXTRA_STATS = ["wRC+"]
+TRADITIONAL_STATS = ["AVG", "OBP", "SLG", "OPS"]
 PITCHER_CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "K-BB%", "CSW%"]
 PITCHER_SECONDARY_STATS = ["HardHit%", "Barrel%", "GB%", "Whiff%", "FirstStrike%"]
 PITCHER_EXTRA_STATS = [stat for stat in (PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS) if stat not in CORE_STATS]
@@ -113,6 +114,10 @@ _DELTA_DECIMALS = {
     "FirstStrike%": 1,
     "K-BB%": 1,
     "wRC+": 0,
+    "AVG": 3,
+    "OBP": 3,
+    "SLG": 3,
+    "OPS": 3,
 }
 _GRID_COLS_PER_ROW = 3
 _DELTA_TILE_CSS = """
@@ -621,14 +626,53 @@ with st.sidebar:
         st.session_state["season_b"] = season_a
         season_b = season_a
 
+    if player_type == "Batter":
+        with st.expander("Options", expanded=False):
+            show_trad = st.toggle(
+                "Show traditional slash stats (AVG/OBP/SLG/OPS)",
+                value=False,
+                key="show_traditional_batting_stats",
+            )
+            _ = show_trad
+
     # ── Stats to show ─────────────────────────────────────────────────────────
+    show_traditional_batting_stats = bool(st.session_state.get("show_traditional_batting_stats", False))
+    batter_stats_catalog = BATTER_EXTRA_STATS + CORE_STATS
+    if show_traditional_batting_stats:
+        batter_stats_catalog = batter_stats_catalog + TRADITIONAL_STATS
+
     stats_catalog = (
         PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS
         if player_type == "Pitcher"
-        else BATTER_EXTRA_STATS + CORE_STATS
+        else batter_stats_catalog
     )
-    if "selected_stats_requested" not in st.session_state:
-        st.session_state["selected_stats_requested"] = stats_catalog.copy()
+    stats_selection_key = "selected_stats_requested"
+    if stats_selection_key not in st.session_state:
+        st.session_state[stats_selection_key] = (
+            (PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS)
+            if player_type == "Pitcher"
+            else _DEFAULT_STATS.copy()
+        )
+
+    if player_type == "Batter":
+        prev_toggle_key = "show_traditional_batting_stats_prev"
+        if prev_toggle_key not in st.session_state:
+            st.session_state[prev_toggle_key] = show_traditional_batting_stats
+        prev_show_traditional = bool(st.session_state.get(prev_toggle_key, show_traditional_batting_stats))
+        selected_stats_state = list(st.session_state.get(stats_selection_key, _DEFAULT_STATS.copy()))
+
+        if show_traditional_batting_stats and not prev_show_traditional:
+            selected_stats_state = list(dict.fromkeys(selected_stats_state + TRADITIONAL_STATS))
+            st.session_state[stats_selection_key] = selected_stats_state
+            for stat in TRADITIONAL_STATS:
+                st.session_state[f"stat_show_{stat}"] = True
+        elif (not show_traditional_batting_stats) and prev_show_traditional:
+            selected_stats_state = [stat for stat in selected_stats_state if stat not in TRADITIONAL_STATS]
+            st.session_state[stats_selection_key] = selected_stats_state
+            for stat in TRADITIONAL_STATS:
+                st.session_state[f"stat_show_{stat}"] = False
+
+        st.session_state[prev_toggle_key] = show_traditional_batting_stats
 
     _selected_count = sum(
         1 for stat in stats_catalog if st.session_state.get(f"stat_show_{stat}", True)
@@ -637,7 +681,7 @@ with st.sidebar:
         for stat in stats_catalog:
             k = f"stat_show_{stat}"
             if k not in st.session_state:
-                st.session_state[k] = stat in st.session_state["selected_stats_requested"]
+                st.session_state[k] = stat in st.session_state[stats_selection_key]
 
         btn_col1, btn_col2, btn_col3 = st.columns(3)
         with btn_col1:
@@ -672,7 +716,7 @@ with st.sidebar:
         stat for stat in stats_catalog
         if st.session_state.get(f"stat_show_{stat}", False)
     ]
-    st.session_state["selected_stats_requested"] = selected_stats_requested
+    st.session_state[stats_selection_key] = selected_stats_requested
 
     # ── Filters ───────────────────────────────────────────────────────────────
     # --- filter row session state init ---
@@ -946,6 +990,10 @@ if comparison_mode and statcast_df_b is not None:
     validation_frames.append((selected_name_b, statcast_df_b))
 
 for stat in selected_stats_requested:
+    if stat in TRADITIONAL_STATS and player_type == "Batter":
+        selected_stats.append(stat)
+        continue
+
     if stat == "wRC+" and player_type == "Batter":
         selected_stats.append(stat)
         continue
@@ -985,6 +1033,8 @@ if missing_stat_requirements:
 _raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
 if player_type == "Batter":
     _raw["wRC+"] = _as_optional_float(player_row.get("wRC+"))
+    for stat in TRADITIONAL_STATS:
+        _raw[stat] = _as_optional_float(player_row.get(stat))
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
 distributions = (
@@ -996,6 +1046,12 @@ if player_type == "Batter" and "wRC+" in season_df.columns:
     wrc_values = pd.to_numeric(season_df["wRC+"], errors="coerce").dropna().to_numpy(dtype=float)
     if len(wrc_values) > 0:
         distributions["wRC+"] = wrc_values
+if player_type == "Batter":
+    for stat in TRADITIONAL_STATS:
+        if stat in season_df.columns:
+            stat_values = pd.to_numeric(season_df[stat], errors="coerce").dropna().to_numpy(dtype=float)
+            if len(stat_values) > 0:
+                distributions[stat] = stat_values
 percentiles   = get_all_percentiles(player_stats, distributions, player_type=player_type)
 color_tiers   = get_all_color_tiers(percentiles)
 
@@ -1006,6 +1062,8 @@ if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
     if player_type == "Batter" and player_row_b is not None:
         _raw_b["wRC+"] = _as_optional_float(player_row_b.get("wRC+"))
+        for stat in TRADITIONAL_STATS:
+            _raw_b[stat] = _as_optional_float(player_row_b.get(stat))
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
@@ -1021,6 +1079,12 @@ if comparison_mode and filtered_df_b is not None:
         wrc_values_b = pd.to_numeric(season_df_b_fg["wRC+"], errors="coerce").dropna().to_numpy(dtype=float)
         if len(wrc_values_b) > 0:
             distributions_b["wRC+"] = wrc_values_b
+    if player_type == "Batter":
+        for stat in TRADITIONAL_STATS:
+            if stat in season_df_b_fg.columns:
+                stat_values_b = pd.to_numeric(season_df_b_fg[stat], errors="coerce").dropna().to_numpy(dtype=float)
+                if len(stat_values_b) > 0:
+                    distributions_b[stat] = stat_values_b
     percentiles_b = get_all_percentiles(player_stats_b, distributions_b, player_type=player_type)
     color_tiers_b = get_all_color_tiers(percentiles_b)
 
