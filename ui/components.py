@@ -108,15 +108,21 @@ _PLOTLY_QUAL_PALETTE = [
     "#FF97FF",
     "#FECB52",
 ]
-_OUTCOME_STYLE: dict[str, dict[str, str | float]] = {
-    "Called Strike": {"symbol": "circle", "opacity": 0.85},
-    "Swinging Strike": {"symbol": "x", "opacity": 0.85},
-    "Foul": {"symbol": "triangle-up", "opacity": 0.65},
-    "Ball": {"symbol": "circle-open", "opacity": 0.50},
-    "In Play": {"symbol": "square", "opacity": 0.90},
-    "Other": {"symbol": "diamond", "opacity": 0.60},
+_OUTCOME_SYMBOLS: dict[str, str] = {
+    "Ball": "circle-open",
+    "Called Strike": "circle",
+    "Swinging Strike": "x",
+    "Foul": "triangle-up",
+    "In Play": "square",
+    "Other": "diamond",
 }
-_OUTCOME_ORDER = ["Called Strike", "Swinging Strike", "Foul", "Ball", "In Play", "Other"]
+_OUTCOME_ORDER = ["Ball", "Called Strike", "Swinging Strike", "Foul", "In Play", "Other"]
+_OUTCOME_LEGEND_HTML = (
+    '<p style="font-size:12px;color:rgba(255,255,255,0.60);margin:2px 0 6px 0;">'
+    "○ Ball &nbsp;·&nbsp; ● Called Strike &nbsp;·&nbsp; ✕ Swinging Strike"
+    " &nbsp;·&nbsp; ▲ Foul &nbsp;·&nbsp; ■ In Play"
+    "</p>"
+)
 
 
 def format_stat_value(stat: str, value: float | None) -> str:
@@ -430,6 +436,7 @@ def _add_zone_shapes(
     z_bot: float,
     z_top: float,
     grid: int = 3,
+    draw_grid: bool = True,
 ) -> None:
     """Add strike-zone outer box and per-cell rectangle grid to figure shapes."""
     fig.add_shape(
@@ -438,13 +445,15 @@ def _add_zone_shapes(
         x1=x_max,
         y0=z_bot,
         y1=z_top,
-        line=dict(width=1.5, color="rgba(180,180,180,0.8)"),
+        line=dict(width=2, color="rgba(200,200,200,0.75)"),
         fillcolor="rgba(0,0,0,0)",
     )
 
+    if not draw_grid:
+        return
+
     cell_w = (x_max - x_min) / float(grid)
     cell_h = (z_top - z_bot) / float(grid)
-    center_idx = grid // 2
 
     for row in range(grid):
         for col in range(grid):
@@ -452,17 +461,13 @@ def _add_zone_shapes(
             cx1 = cx0 + cell_w
             cy0 = z_bot + row * cell_h
             cy1 = cy0 + cell_h
-            is_center = (row == center_idx) and (col == center_idx) and (grid % 2 == 1)
             fig.add_shape(
                 type="rect",
                 x0=cx0,
                 x1=cx1,
                 y0=cy0,
                 y1=cy1,
-                line=dict(
-                    width=1.2 if is_center else 1,
-                    color="rgba(145,145,145,0.45)" if is_center else "rgba(120,120,120,0.35)",
-                ),
+                line=dict(width=0.6, color="rgba(100,100,100,0.22)"),
                 fillcolor="rgba(0,0,0,0)",
             )
 
@@ -500,12 +505,44 @@ def _compute_zone_histogram(
     return hist, x_edges, z_edges
 
 
+def _stable_downsample(df: pd.DataFrame, n: int) -> pd.DataFrame:
+    """
+    Deterministically downsample to n rows in a way stable across reruns.
+
+    Uses the best available sort-key set before selecting evenly spaced rows.
+    """
+    n_int = max(1, int(n))
+    priority_cols = [
+        ["game_pk", "at_bat_number", "pitch_number"],
+        ["game_pk", "inning", "balls", "strikes"],
+        ["game_date", "inning", "balls", "strikes"],
+    ]
+
+    chosen_cols: list[str] | None = None
+    for cols in priority_cols:
+        if all(col in df.columns for col in cols):
+            chosen_cols = cols
+            break
+
+    if chosen_cols is not None:
+        ordered = df.sort_values(by=chosen_cols, ascending=True, kind="mergesort").copy()
+    else:
+        ordered = df.sort_index().copy()
+
+    if len(ordered) <= n_int:
+        return ordered
+
+    idx = np.linspace(0, len(ordered) - 1, n_int, dtype=int)
+    return ordered.iloc[idx].copy()
+
+
 def _add_zone_heatmap_layer(
     fig: go.Figure,
     hist: np.ndarray,
     x_edges: np.ndarray,
     z_edges: np.ndarray,
     normalize: bool = False,
+    show_scale: bool = False,
 ) -> None:
     """Add a subtle heatmap layer behind scatter traces."""
     x_centers = (x_edges[:-1] + x_edges[1:]) / 2.0
@@ -515,9 +552,9 @@ def _add_zone_heatmap_layer(
             x=x_centers,
             y=z_centers,
             z=hist.T,
-            colorscale="YlOrRd",
-            opacity=0.38,
-            showscale=True,
+            colorscale="Blues",
+            opacity=0.20,
+            showscale=show_scale,
             colorbar=dict(
                 title="Density %" if normalize else "Count",
                 ticksuffix="%" if normalize else "",
@@ -550,14 +587,34 @@ def _bucket_outcome(description: str) -> str:
     return "Other"
 
 
+def _ball_strike_bucket(outcome_bucket: str) -> str:
+    """Map 6-way outcome bucket to Ball/Strike/Unknown."""
+    if outcome_bucket == "Ball":
+        return "Ball"
+    if outcome_bucket in {"Called Strike", "Swinging Strike", "Foul", "In Play"}:
+        return "Strike"
+    return "Unknown"
+
+
+def _derive_outcome_fields(description: str) -> tuple[str, str]:
+    """Return (outcome_bucket, bs_bucket) for a pitch description."""
+    outcome_bucket = _bucket_outcome(description)
+    return outcome_bucket, _ball_strike_bucket(outcome_bucket)
+
+
 def _build_zone_chart(
     df: pd.DataFrame,
     max_pitches: int = 500,
     grid: int = 3,
     pitch_types: list[str] | None = None,
+    encode_outcomes: bool = False,
+    selected_outcomes: list[str] | None = None,
     show_heatmap: bool = False,
     heatmap_bins: int = 20,
     heatmap_normalize: bool = False,
+    heatmap_show_scale: bool = False,
+    show_grid_overlay: bool = True,
+    view_mode: str = "Zoom to zone",
 ) -> go.Figure:
     """Build pitch-location scatter plot with strike-zone grid overlay."""
     work = df.copy()
@@ -567,25 +624,27 @@ def _build_zone_chart(
             return go.Figure()
         work = work[work["pitch_type"].astype(str).isin([str(p) for p in pitch_types])].copy()
 
-    work = work.dropna(subset=["plate_x", "plate_z"]).copy()
-    if work.empty:
-        return go.Figure()
-
-    sample_n = min(int(max_pitches), len(work))
-    work = work.sample(n=sample_n, random_state=42).copy()
     if "pitch_type" in work.columns:
         work["pitch_type"] = work["pitch_type"].fillna("UNK").astype(str)
     else:
         work["pitch_type"] = "UNK"
     if "description" in work.columns:
-        work["outcome_group"] = work["description"].fillna("").map(_bucket_outcome)
+        outcomes = work["description"].fillna("").map(_derive_outcome_fields)
     else:
-        work["outcome_group"] = "Other"
+        outcomes = pd.Series([_derive_outcome_fields("")] * len(work), index=work.index)
+    work["outcome_bucket"] = outcomes.map(lambda x: x[0])
+    work["bs_bucket"] = outcomes.map(lambda x: x[1])
+    if selected_outcomes is not None:
+        allowed = {str(outcome) for outcome in selected_outcomes}
+        work = work[work["outcome_bucket"].isin(allowed)].copy()
     work["plate_x"] = pd.to_numeric(work["plate_x"], errors="coerce")
     work["plate_z"] = pd.to_numeric(work["plate_z"], errors="coerce")
     work = work.dropna(subset=["plate_x", "plate_z"]).copy()
     if work.empty:
         return go.Figure()
+
+    sample_n = min(int(max_pitches), len(work))
+    work = _stable_downsample(work, sample_n)
 
     x_min, x_max, z_bot, z_top = _zone_bounds(work)
     fig = go.Figure()
@@ -599,7 +658,14 @@ def _build_zone_chart(
             bins=int(heatmap_bins),
             normalize=bool(heatmap_normalize),
         )
-        _add_zone_heatmap_layer(fig, hist, x_edges, z_edges, normalize=bool(heatmap_normalize))
+        _add_zone_heatmap_layer(
+            fig,
+            hist,
+            x_edges,
+            z_edges,
+            normalize=bool(heatmap_normalize),
+            show_scale=bool(heatmap_show_scale),
+        )
 
     pitch_order = sorted(work["pitch_type"].unique())
     fallback_types = [pt for pt in pitch_order if pt not in _PITCH_TYPE_COLORS]
@@ -613,94 +679,134 @@ def _build_zone_chart(
         if pitch_df.empty:
             continue
 
-        legend_shown_for_pitch = False
-        for outcome in _OUTCOME_ORDER:
-            trace_df = pitch_df[pitch_df["outcome_group"] == outcome].copy()
-            if trace_df.empty:
-                continue
-
-            custom_cols: list[np.ndarray] = []
-            hover_lines = [
-                f"Pitch: {pitch_type}",
-                f"Outcome: {outcome}",
-                "x: %{x:.2f} ft",
-                "z: %{y:.2f} ft",
-            ]
-            custom_idx = 0
-
-            if "release_speed" in trace_df.columns:
-                velo = pd.to_numeric(trace_df["release_speed"], errors="coerce")
-                custom_cols.append(np.where(velo.notna(), np.round(velo, 1).astype(str), "—"))
-                hover_lines.append(f"Velo: %{{customdata[{custom_idx}]}} mph")
-                custom_idx += 1
-
-            if "description" in trace_df.columns:
-                desc = trace_df["description"].fillna("—").astype(str).to_numpy()
-                custom_cols.append(desc)
-                hover_lines.append(f"Desc: %{{customdata[{custom_idx}]}}")
-                custom_idx += 1
-
-            if "events" in trace_df.columns:
-                events = trace_df["events"].fillna("—").astype(str).to_numpy()
-                custom_cols.append(events)
-                hover_lines.append(f"Event: %{{customdata[{custom_idx}]}}")
-                custom_idx += 1
-
-            if "balls" in trace_df.columns and "strikes" in trace_df.columns:
-                balls = pd.to_numeric(trace_df["balls"], errors="coerce")
-                strikes = pd.to_numeric(trace_df["strikes"], errors="coerce")
-                count_vals = np.where(
-                    balls.notna() & strikes.notna(),
-                    balls.astype("Int64").astype(str) + "-" + strikes.astype("Int64").astype(str),
-                    "—",
-                )
-                custom_cols.append(count_vals)
-                hover_lines.append(f"Count: %{{customdata[{custom_idx}]}}")
-
-            customdata = np.column_stack(custom_cols) if custom_cols else None
-            show_legend = not legend_shown_for_pitch
-            outcome_style = _OUTCOME_STYLE.get(outcome, _OUTCOME_STYLE["Other"])
-
+        pitch_color = _PITCH_TYPE_COLORS.get(pitch_type, fallback_map.get(pitch_type, "#9aa0a6"))
+        if encode_outcomes:
             fig.add_trace(
                 go.Scattergl(
-                    x=trace_df["plate_x"],
-                    y=trace_df["plate_z"],
+                    x=[None],
+                    y=[None],
                     mode="markers",
                     name=pitch_type,
                     legendgroup=f"pt:{pitch_type}",
-                    legendgrouptitle_text=pitch_type if show_legend else None,
-                    showlegend=show_legend,
+                    showlegend=True,
                     marker=dict(
-                        size=6,
-                        symbol=str(outcome_style["symbol"]),
-                        color=_PITCH_TYPE_COLORS.get(pitch_type, fallback_map.get(pitch_type, "#9aa0a6")),
-                        opacity=float(outcome_style["opacity"]),
+                        size=10,
+                        symbol="circle",
+                        color=pitch_color,
+                        opacity=0.75,
                     ),
-                    customdata=customdata,
-                    hovertemplate="<br>".join(hover_lines) + "<extra></extra>",
+                    hoverinfo="skip",
                 )
             )
-            if show_legend:
-                legend_shown_for_pitch = True
 
-    _add_zone_shapes(fig, x_min, x_max, z_bot, z_top, grid=grid)
+        custom_cols: list[np.ndarray] = []
+        hover_lines = [
+            f"Pitch: {pitch_type}",
+            "Ball/Strike: %{customdata[0]}",
+            "Outcome: %{customdata[1]}",
+            "x: %{x:.2f} ft",
+            "z: %{y:.2f} ft",
+        ]
+        custom_idx = 2
 
-    x_pad = 0.25
-    y_pad = 0.30
+        custom_cols.append(pitch_df["bs_bucket"].fillna("Unknown").astype(str).to_numpy())
+        custom_cols.append(pitch_df["outcome_bucket"].fillna("Other").astype(str).to_numpy())
+
+        if "release_speed" in pitch_df.columns:
+            velo = pd.to_numeric(pitch_df["release_speed"], errors="coerce")
+            custom_cols.append(np.where(velo.notna(), np.round(velo, 1).astype(str), "—"))
+            hover_lines.append(f"Velo: %{{customdata[{custom_idx}]}} mph")
+            custom_idx += 1
+
+        if "description" in pitch_df.columns:
+            desc = pitch_df["description"].fillna("—").astype(str).to_numpy()
+            custom_cols.append(desc)
+            hover_lines.append(f"Desc: %{{customdata[{custom_idx}]}}")
+            custom_idx += 1
+
+        if "events" in pitch_df.columns:
+            events = pitch_df["events"].fillna("—").astype(str).to_numpy()
+            custom_cols.append(events)
+            hover_lines.append(f"Event: %{{customdata[{custom_idx}]}}")
+            custom_idx += 1
+
+        if "balls" in pitch_df.columns and "strikes" in pitch_df.columns:
+            balls = pd.to_numeric(pitch_df["balls"], errors="coerce")
+            strikes = pd.to_numeric(pitch_df["strikes"], errors="coerce")
+            count_vals = np.where(
+                balls.notna() & strikes.notna(),
+                balls.astype("Int64").astype(str) + "-" + strikes.astype("Int64").astype(str),
+                "—",
+            )
+            custom_cols.append(count_vals)
+            hover_lines.append(f"Count: %{{customdata[{custom_idx}]}}")
+
+        customdata = np.column_stack(custom_cols) if custom_cols else None
+        marker_symbols = (
+            pitch_df["outcome_bucket"].map(_OUTCOME_SYMBOLS).fillna("diamond").tolist()
+            if encode_outcomes
+            else "circle"
+        )
+        fig.add_trace(
+            go.Scattergl(
+                x=pitch_df["plate_x"],
+                y=pitch_df["plate_z"],
+                mode="markers",
+                name=pitch_type,
+                legendgroup=f"pt:{pitch_type}",
+                showlegend=not encode_outcomes,
+                marker=dict(
+                    size=7,
+                    symbol=marker_symbols,
+                    color=pitch_color,
+                    opacity=0.75,
+                ),
+                customdata=customdata,
+                hovertemplate="<br>".join(hover_lines) + "<extra></extra>",
+            )
+        )
+
+    _add_zone_shapes(fig, x_min, x_max, z_bot, z_top, grid=grid, draw_grid=bool(show_grid_overlay))
+
+    if view_mode == "Zoom to zone":
+        x_range = [x_min - 0.6, x_max + 0.6]
+        y_range = [z_bot - 0.4, z_top + 0.4]
+    else:
+        x_data_min = float(work["plate_x"].min())
+        x_data_max = float(work["plate_x"].max())
+        y_data_min = float(work["plate_z"].min())
+        y_data_max = float(work["plate_z"].max())
+        x_range = [min(x_data_min - 0.3, x_min - 0.25), max(x_data_max + 0.3, x_max + 0.25)]
+        y_range = [min(y_data_min - 0.3, z_bot - 0.3), max(y_data_max + 0.3, z_top + 0.3)]
+
     fig.update_layout(
         template="plotly_dark",
+        height=480,
         showlegend=True,
-        margin=dict(l=10, r=10, t=24, b=10),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0.55)",
+            bordercolor="rgba(255,255,255,0.25)",
+            borderwidth=1,
+            font=dict(size=12),
+            itemsizing="constant",
+            x=1.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+        ),
+        margin=dict(l=0, r=0, t=20, b=10),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
             title="Plate X (ft)",
-            range=[x_min - x_pad, x_max + x_pad],
+            range=x_range,
             zeroline=False,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.15)",
         ),
         yaxis=dict(
             title="Plate Z (ft)",
-            range=[z_bot - y_pad, z_top + y_pad],
+            range=y_range,
             zeroline=False,
             showgrid=True,
             gridcolor="rgba(128,128,128,0.15)",
@@ -716,6 +822,9 @@ def render_pitch_movement_chart(
     df: pd.DataFrame,
     max_pitches: int,
     pitch_types: list[str] | None = None,
+    perspective: str = "Pitcher view",
+    mirror_lhp: bool = False,
+    vertical_axis_mode: str = "Break direction (down = more drop)",
 ) -> None:
     """Render horizontal/vertical movement scatter (pfx_x vs pfx_z)."""
     if "pfx_x" not in df.columns or "pfx_z" not in df.columns:
@@ -739,6 +848,28 @@ def render_pitch_movement_chart(
         work["pitch_type"] = work["pitch_type"].fillna("UNK").astype(str)
     else:
         work["pitch_type"] = "UNK"
+    if "description" in work.columns:
+        outcomes = work["description"].fillna("").map(_derive_outcome_fields)
+    else:
+        outcomes = pd.Series([_derive_outcome_fields("")] * len(work), index=work.index)
+    work["outcome_bucket"] = outcomes.map(lambda x: x[0])
+    work["bs_bucket"] = outcomes.map(lambda x: x[1])
+
+    x_vals = work["pfx_x"].to_numpy(copy=True)
+    y_vals = work["pfx_z"].to_numpy(copy=True)
+    if perspective == "Pitcher view":
+        x_vals = -x_vals
+
+    if mirror_lhp and "p_throws" in work.columns:
+        throws = work["p_throws"].fillna("").astype(str).str.upper().to_numpy()
+        signs = np.where(throws == "L", -1.0, 1.0)
+        x_vals = x_vals * signs
+
+    if vertical_axis_mode == "Break direction (down = more drop)":
+        y_vals = -y_vals
+
+    work["movement_x"] = x_vals
+    work["movement_z"] = y_vals
 
     pitch_order = sorted(work["pitch_type"].unique())
     fallback_types = [pt for pt in pitch_order if pt not in _PITCH_TYPE_COLORS]
@@ -754,8 +885,17 @@ def render_pitch_movement_chart(
             continue
 
         custom_cols: list[np.ndarray] = []
-        hover_lines = [f"Pitch: {pitch_type}", "pfx_x: %{x:.2f} ft", "pfx_z: %{y:.2f} ft"]
-        custom_idx = 0
+        hover_lines = [
+            f"Pitch: {pitch_type}",
+            "Ball/Strike: %{customdata[0]}",
+            "Outcome: %{customdata[1]}",
+            "Break X: %{x:.2f} ft",
+            "Break Z: %{y:.2f} ft",
+        ]
+        custom_idx = 2
+
+        custom_cols.append(trace_df["bs_bucket"].fillna("Unknown").astype(str).to_numpy())
+        custom_cols.append(trace_df["outcome_bucket"].fillna("Other").astype(str).to_numpy())
 
         if "release_speed" in trace_df.columns:
             velo = pd.to_numeric(trace_df["release_speed"], errors="coerce")
@@ -777,14 +917,15 @@ def render_pitch_movement_chart(
         customdata = np.column_stack(custom_cols) if custom_cols else None
         fig.add_trace(
             go.Scattergl(
-                x=trace_df["pfx_x"],
-                y=trace_df["pfx_z"],
+                x=trace_df["movement_x"],
+                y=trace_df["movement_z"],
                 mode="markers",
                 name=pitch_type,
                 marker=dict(
-                    size=6,
+                    size=7,
+                    symbol="circle",
                     color=_PITCH_TYPE_COLORS.get(pitch_type, fallback_map.get(pitch_type, "#9aa0a6")),
-                    opacity=0.8,
+                    opacity=0.75,
                 ),
                 customdata=customdata,
                 hovertemplate="<br>".join(hover_lines) + "<extra></extra>",
@@ -793,23 +934,47 @@ def render_pitch_movement_chart(
 
     x_pad = 0.5
     y_pad = 0.5
-    x_min = float(work["pfx_x"].min()) - x_pad
-    x_max = float(work["pfx_x"].max()) + x_pad
-    y_min = float(work["pfx_z"].min()) - y_pad
-    y_max = float(work["pfx_z"].max()) + y_pad
+    x_min = float(work["movement_x"].min()) - x_pad
+    x_max = float(work["movement_x"].max()) + x_pad
+    y_min = float(work["movement_z"].min()) - y_pad
+    y_max = float(work["movement_z"].max()) + y_pad
+    x_label = (
+        "Horizontal Break (pitcher view, ft)"
+        if perspective == "Pitcher view"
+        else "Horizontal Break (Statcast view, ft)"
+    )
+    y_label = (
+        "Vertical Break (induced/Statcast, ft)"
+        if vertical_axis_mode == "Induced (Statcast)"
+        else "Vertical Break (pitcher view; down = more drop, ft)"
+    )
     fig.update_layout(
         template="plotly_dark",
+        height=480,
         showlegend=True,
-        margin=dict(l=10, r=10, t=24, b=10),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0.55)",
+            bordercolor="rgba(255,255,255,0.25)",
+            borderwidth=1,
+            font=dict(size=12),
+            itemsizing="constant",
+            x=1.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+        ),
+        margin=dict(l=0, r=0, t=20, b=10),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
-            title="Horizontal Break (pfx_x, ft)",
+            title=x_label,
             range=[x_min, x_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.15)",
             zeroline=False,
         ),
         yaxis=dict(
-            title="Vertical Break (pfx_z, ft)",
+            title=y_label,
             range=[y_min, y_max],
             showgrid=True,
             gridcolor="rgba(128,128,128,0.15)",
@@ -822,7 +987,7 @@ def render_pitch_movement_chart(
                 x1=0,
                 y0=y_min,
                 y1=y_max,
-                line=dict(color="rgba(180,180,180,0.4)", width=1, dash="dot"),
+                line=dict(color="rgba(180,180,180,0.55)", width=1.5, dash="dot"),
             ),
             dict(
                 type="line",
@@ -830,11 +995,20 @@ def render_pitch_movement_chart(
                 x1=x_max,
                 y0=0,
                 y1=0,
-                line=dict(color="rgba(180,180,180,0.4)", width=1, dash="dot"),
+                line=dict(color="rgba(180,180,180,0.55)", width=1.5, dash="dot"),
             ),
         ],
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+PITCH_PRESETS: dict[str, list[str] | None] = {
+    "All": None,
+    "Fastballs": ["FF", "SI", "FC"],
+    "Breaking": ["SL", "CU", "KC", "SV", "ST", "CS"],
+    "Offspeed": ["CH", "FS", "FO"],
+    "Putaway": ["SL", "CU", "CH", "ST", "FS"],
+}
 
 
 def render_pitch_zone_chart(df: pd.DataFrame) -> None:
@@ -844,8 +1018,41 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
             st.info("No pitch data available for this selection.")
             return
 
-        control_cols = st.columns([1.2, 1.0, 2.0])
-        with control_cols[0]:
+        viz_df = df.copy()
+        has_stand = "stand" in df.columns
+        if "pitch_type" in viz_df.columns:
+            pitch_type_options = sorted(viz_df["pitch_type"].dropna().astype(str).unique().tolist())
+        else:
+            pitch_type_options = []
+
+        preset_col, hand_col = st.columns([2.5, 2.0])
+        with preset_col:
+            pitch_preset = st.radio(
+                "Pitch group",
+                options=list(PITCH_PRESETS.keys()),
+                horizontal=True,
+                key="pitch_zone_preset",
+            )
+        with hand_col:
+            st.caption("Batter hand")
+            batter_hand = st.radio(
+                "",
+                options=["All", "vs LHB", "vs RHB"],
+                horizontal=True,
+                key="pitch_zone_batter_hand",
+                label_visibility="collapsed",
+            )
+
+        prev_preset = st.session_state.get("_pitch_zone_prev_preset")
+        if prev_preset != pitch_preset:
+            st.session_state["_pitch_zone_prev_preset"] = pitch_preset
+            implied = PITCH_PRESETS.get(pitch_preset)
+            if implied is not None:
+                st.session_state["pitch_zone_pitch_types_advanced"] = [
+                    pitch_type for pitch_type in implied if pitch_type in pitch_type_options
+                ]
+
+        with st.expander("Options", expanded=False):
             max_pitches = st.slider(
                 "Max pitches",
                 min_value=100,
@@ -854,7 +1061,30 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
                 step=100,
                 key="pitch_zone_max_pitches",
             )
-        with control_cols[1]:
+            include_switch = True
+            if has_stand and batter_hand != "All":
+                include_switch = st.checkbox(
+                    "Include switch hitters",
+                    value=True,
+                    key="pitch_zone_include_switch",
+                )
+
+            st.markdown("**Zone Map**")
+            encode_outcomes = st.checkbox(
+                "Encode outcomes (symbols)",
+                value=False,
+                key="pitch_loc_encode_outcomes",
+            )
+            if encode_outcomes:
+                selected_outcomes = st.multiselect(
+                    "Outcomes",
+                    options=_OUTCOME_ORDER,
+                    default=_OUTCOME_ORDER,
+                    key="pitch_loc_outcomes",
+                )
+            else:
+                selected_outcomes = None
+
             grid_label = st.radio(
                 "Grid",
                 options=["3×3", "5×5"],
@@ -862,51 +1092,132 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
                 key="pitch_zone_grid",
             )
             grid = 3 if grid_label == "3×3" else 5
-        with control_cols[2]:
-            if "pitch_type" in df.columns:
-                options = sorted(df["pitch_type"].dropna().astype(str).unique().tolist())
-            else:
-                options = []
-            selected_pitch_types = st.multiselect(
-                "Pitch type",
-                options=options,
-                default=options,
-                key="pitch_zone_pitch_types",
+
+            view_mode = st.radio(
+                "View",
+                options=["Zoom to zone", "Show all pitches"],
+                horizontal=True,
+                key="pitch_loc_zone_view",
+            )
+            show_heatmap = st.checkbox("Show heatmap", value=False, key="pitch_zone_show_heatmap")
+            normalize_heatmap = st.checkbox(
+                "Normalize to %",
+                value=False,
+                key="pitch_zone_heatmap_normalize",
+                disabled=not show_heatmap,
+            )
+            heatmap_bins = st.slider(
+                "Heatmap resolution",
+                min_value=10,
+                max_value=40,
+                value=20,
+                step=1,
+                key="pitch_zone_heatmap_bins",
+                disabled=not show_heatmap,
+            )
+            heatmap_show_scale = st.checkbox(
+                "Show heatmap scale",
+                value=False,
+                key="pitch_zone_heatmap_show_scale",
+                disabled=not show_heatmap,
+            )
+            prev_heatmap = st.session_state.get("_pitch_loc_prev_show_heatmap")
+            if prev_heatmap is None or bool(prev_heatmap) != bool(show_heatmap):
+                st.session_state["pitch_loc_show_grid_overlay"] = not bool(show_heatmap)
+                st.session_state["_pitch_loc_prev_show_heatmap"] = bool(show_heatmap)
+            show_grid_overlay = st.checkbox(
+                "Show grid overlay",
+                key="pitch_loc_show_grid_overlay",
             )
 
-        st.caption(
-            "Outcome encoding: Called Strike (circle, 0.85), Swinging Strike (x, 0.85), "
-            "Foul (triangle-up, 0.65), Ball (circle-open, 0.50), In Play (square, 0.90), "
-            "Other (diamond, 0.60)."
+            st.markdown("**Movement**")
+            movement_perspective = st.radio(
+                "Movement perspective",
+                options=["Pitcher view", "Catcher/Statcast view"],
+                horizontal=True,
+                key="pitch_movement_perspective",
+            )
+            default_vertical_mode = (
+                "Break direction (down = more drop)"
+                if movement_perspective == "Pitcher view"
+                else "Induced (Statcast)"
+            )
+            prev_perspective = st.session_state.get("_pitch_movement_prev_perspective")
+            if prev_perspective != movement_perspective:
+                st.session_state["pitch_movement_vertical_axis"] = default_vertical_mode
+                st.session_state["_pitch_movement_prev_perspective"] = movement_perspective
+
+            vertical_axis_mode = st.radio(
+                "Vertical axis",
+                options=["Induced (Statcast)", "Break direction (down = more drop)"],
+                horizontal=True,
+                key="pitch_movement_vertical_axis",
+            )
+            has_throws = "p_throws" in viz_df.columns and viz_df["p_throws"].notna().any()
+            if has_throws:
+                mirror_lhp = st.checkbox(
+                    "Mirror LHP to RHP view (arm-side consistent)",
+                    value=False,
+                    key="pitch_movement_mirror_lhp",
+                )
+            else:
+                mirror_lhp = False
+
+            st.markdown("**Pitch types (advanced)**")
+            if "pitch_zone_pitch_types_advanced" not in st.session_state:
+                st.session_state["pitch_zone_pitch_types_advanced"] = pitch_type_options
+            else:
+                st.session_state["pitch_zone_pitch_types_advanced"] = [
+                    pitch_type
+                    for pitch_type in st.session_state["pitch_zone_pitch_types_advanced"]
+                    if pitch_type in pitch_type_options
+                ]
+            selected_pitch_types = st.multiselect(
+                "Pitch type",
+                options=pitch_type_options,
+                key="pitch_zone_pitch_types_advanced",
+            )
+
+        filtered_df = viz_df.copy()
+
+        if has_stand:
+            stand_vals = filtered_df["stand"].fillna("").astype(str).str.upper()
+            if batter_hand == "vs LHB":
+                keep = {"L", "S"} if include_switch else {"L"}
+                filtered_df = filtered_df[stand_vals.isin(keep)].copy()
+            elif batter_hand == "vs RHB":
+                keep = {"R", "S"} if include_switch else {"R"}
+                filtered_df = filtered_df[stand_vals.isin(keep)].copy()
+
+        advanced_override = (
+            bool(pitch_type_options)
+            and set(selected_pitch_types) != set(pitch_type_options)
+            and "pitch_type" in filtered_df.columns
         )
+        if advanced_override:
+            filtered_df = filtered_df[
+                filtered_df["pitch_type"].astype(str).isin([str(p) for p in selected_pitch_types])
+            ].copy()
+        else:
+            preset_types = PITCH_PRESETS[pitch_preset]
+            if preset_types is not None and "pitch_type" in filtered_df.columns:
+                available_types = set(filtered_df["pitch_type"].dropna().astype(str).unique().tolist())
+                preset_match = sorted(available_types.intersection(set(preset_types)))
+                if preset_match:
+                    filtered_df = filtered_df[filtered_df["pitch_type"].astype(str).isin(preset_match)].copy()
 
         tab_zone, tab_movement = st.tabs(["Zone Map", "Movement"])
         with tab_zone:
-            heatmap_col_a, heatmap_col_b, heatmap_col_c = st.columns([1.1, 1.2, 1.7])
-            with heatmap_col_a:
-                show_heatmap = st.checkbox("Show heatmap", value=False, key="pitch_zone_show_heatmap")
-            with heatmap_col_b:
-                normalize_heatmap = st.checkbox(
-                    "Normalize to %",
-                    value=False,
-                    key="pitch_zone_heatmap_normalize",
-                    disabled=not show_heatmap,
-                )
-            with heatmap_col_c:
-                heatmap_bins = st.slider(
-                    "Heatmap resolution",
-                    min_value=10,
-                    max_value=40,
-                    value=20,
-                    step=1,
-                    key="pitch_zone_heatmap_bins",
-                    disabled=not show_heatmap,
-                )
+            if encode_outcomes:
+                st.markdown(_OUTCOME_LEGEND_HTML, unsafe_allow_html=True)
+
+            if show_heatmap and max_pitches < 300:
+                st.caption("ℹ Heatmap is most meaningful with ≥ 300 pitches. Increase Max pitches in Options.")
 
             if "plate_x" not in df.columns or "plate_z" not in df.columns:
                 st.info("Pitch location columns are unavailable for this selection.")
             else:
-                valid_zone_df = df.dropna(subset=["plate_x", "plate_z"])
+                valid_zone_df = filtered_df.dropna(subset=["plate_x", "plate_z"])
                 if valid_zone_df.empty:
                     st.info("No pitch locations available after filtering.")
                 else:
@@ -914,18 +1225,26 @@ def render_pitch_zone_chart(df: pd.DataFrame) -> None:
                         df=valid_zone_df,
                         max_pitches=max_pitches,
                         grid=grid,
-                        pitch_types=selected_pitch_types if options else None,
+                        pitch_types=None,
+                        encode_outcomes=encode_outcomes,
+                        selected_outcomes=selected_outcomes if encode_outcomes else None,
                         show_heatmap=show_heatmap,
                         heatmap_bins=heatmap_bins,
                         heatmap_normalize=normalize_heatmap,
+                        heatmap_show_scale=heatmap_show_scale,
+                        show_grid_overlay=show_grid_overlay,
+                        view_mode=view_mode,
                     )
-                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
         with tab_movement:
             render_pitch_movement_chart(
-                df=df,
+                df=filtered_df,
                 max_pitches=max_pitches,
-                pitch_types=selected_pitch_types if options else None,
+                pitch_types=None,
+                perspective=movement_perspective,
+                mirror_lhp=mirror_lhp,
+                vertical_axis_mode=vertical_axis_mode,
             )
 
 
