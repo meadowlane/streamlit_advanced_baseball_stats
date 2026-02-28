@@ -39,6 +39,12 @@ PITCHER_KEEP_COLS = STATCAST_KEEP_COLS + [
     "release_speed",
     "release_spin_rate",
     "bb_type",
+    "plate_x",   # zone
+    "plate_z",   # zone
+    "sz_top",    # zone
+    "sz_bot",    # zone
+    "pfx_x",     # movement (Slice 5)
+    "pfx_z",     # movement (Slice 5)
 ]
 _BATTING_BASE_COLS = ["IDfg", "Name", "Team", "PA", "Season"]
 _PITCHING_BASE_COLS = ["IDfg", "Name", "Team", "TBF", "Season"]

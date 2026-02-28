@@ -63,6 +63,7 @@ STATCAST_SEASONS = list(range(CURRENT_YEAR, STATCAST_START_YEAR - 1, -1))
 SEASONS = STATCAST_SEASONS
 DEFAULT_SEASON = max(STATCAST_START_YEAR, CURRENT_YEAR - 1)
 FEATURE_PITCHERS = True
+FEATURE_PITCH_ZONE = True
 DEFAULT_PLAYER_TYPE = "Batter"
 
 SPLIT_TYPE_MAP = {
@@ -1059,6 +1060,9 @@ if player_type == "Pitcher":
             render_pitch_arsenal(compute_pitch_arsenal(filtered_df_b))
     else:
         render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+    if FEATURE_PITCH_ZONE:
+        from ui.components import render_pitch_zone_chart
+        render_pitch_zone_chart(filtered_df)
     st.divider()
 
 
