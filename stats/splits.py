@@ -630,7 +630,10 @@ def get_trend_stats(
         cache_key = (int(mlbam_id), int(season), str(player_type))
         prepared = get_prepared_df_cached(raw_df, prepare_cache, cache_key)
         filtered = apply_filters(prepared, filters, pitcher_perspective=(player_type == "Pitcher"))
-        stats = _compute_stats(filtered, player_type=player_type)
+        if str(player_type).strip().lower() == "pitcher":
+            stats = _compute_all_pitcher_stats(filtered)
+        else:
+            stats = _compute_stats(filtered, player_type=player_type)
         sample_sizes = get_sample_sizes(filtered)
         stats["season"] = season
         stats["n_pitches"] = sample_sizes.get("N_pitches")
