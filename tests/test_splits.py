@@ -28,6 +28,7 @@ from stats.splits import (
     SPLIT_COLS,
     PA_EVENTS,
     BARREL_CODE,
+    compute_pitch_arsenal,
 )
 from stats.filters import SplitFilters, prepare_df
 
@@ -626,3 +627,40 @@ class TestGetTrendStats:
         )
         # PA should be 30 (from cached df), not 10 (from stub)
         assert result[0]["PA"] == 30
+
+
+# ---------------------------------------------------------------------------
+# compute_pitch_arsenal
+# ---------------------------------------------------------------------------
+
+class TestComputePitchArsenal:
+    def test_usage_changes_with_handedness_filtering(self):
+        # Keep each pitch type above the minimum arsenal threshold (25 pitches).
+        ff_l = 30
+        ff_r = 25
+        sl_r = 30
+        sl_s = 25
+        df = pd.DataFrame(
+            {
+                "pitch_type": (["FF"] * (ff_l + ff_r)) + (["SL"] * (sl_r + sl_s)),
+                "description": ["called_strike"] * (ff_l + ff_r + sl_r + sl_s),
+                "release_speed": ([96.0] * (ff_l + ff_r)) + ([85.0] * (sl_r + sl_s)),
+                "release_spin_rate": ([2400.0] * (ff_l + ff_r)) + ([2500.0] * (sl_r + sl_s)),
+                "stand": (["L"] * ff_l) + (["R"] * ff_r) + (["R"] * sl_r) + (["S"] * sl_s),
+            }
+        )
+
+        all_mix = compute_pitch_arsenal(df)
+        lhb_mix = compute_pitch_arsenal(df[df["stand"].isin(["L", "S"])].copy())
+        rhb_mix = compute_pitch_arsenal(df[df["stand"].isin(["R", "S"])].copy())
+
+        assert all_mix["N"].sum() == 110
+        assert lhb_mix["N"].sum() == 55
+        assert rhb_mix["N"].sum() == 80
+
+        assert lhb_mix.iloc[0]["Usage%"] == pytest.approx(54.5, abs=0.1)
+        assert rhb_mix.iloc[0]["Usage%"] == pytest.approx(68.8, abs=0.1)
+
+    def test_missing_pitch_mix_columns_returns_empty(self):
+        mix = compute_pitch_arsenal(pd.DataFrame({"pitch_type": ["FF", "SL"]}))
+        assert mix.empty
