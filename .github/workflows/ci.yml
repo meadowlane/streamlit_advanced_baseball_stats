@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: ruff check tests stats data ui
+      - run: ruff format --check tests stats data ui
+
+  typecheck:
+    name: Type check (mypy)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: mypy stats/ data/ ui/
+
+  test:
+    name: Tests + Coverage
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run test suite (not slow)
+        run: |
+          python -m pytest tests/ \
+            -m "not slow" \
+            --cov=stats --cov=data --cov=ui \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=50 \
+            -q
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  nightly:
+    name: Nightly full suite
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Build nightly coverage config (includes app.py)
+        run: |
+          cat > .coveragerc.nightly <<'EOF'
+          [run]
+          source =
+              stats
+              data
+              ui
+              app
+          omit =
+              tests/*
+
+          [report]
+          exclude_lines =
+              pragma: no cover
+              if TYPE_CHECKING:
+          EOF
+      - name: Run full suite with nightly coverage
+        run: |
+          python -m pytest tests/ \
+            --cov=stats --cov=data --cov=ui --cov=app \
+            --cov-config=.coveragerc.nightly \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage-nightly.xml \
+            -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-nightly-report
+          path: coverage-nightly.xml
