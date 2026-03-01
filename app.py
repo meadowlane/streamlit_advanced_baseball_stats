@@ -36,6 +36,7 @@ from stats.splits import (
     get_sample_sizes,
     get_splits,
     get_trend_stats,
+    build_trend_context_key,
 )
 from ui.components import (
     percentile_bar_chart,
@@ -1451,11 +1452,14 @@ with st.expander("Player Trend by Year", expanded=False):
     # This prevents N Statcast API calls on every rerun while the expander is collapsed.
     # The context key captures the current player+season combo; when it changes the
     # "Load" button re-appears so stale data is never shown silently.
-    _trend_ctx = (
-        int(mlbam_id),
-        int(season_a),
-        int(mlbam_id_b) if (comparison_mode and mlbam_id_b is not None) else None,
-        int(season_b) if comparison_mode else int(season_a),
+    _trend_ctx = build_trend_context_key(
+        mlbam_id=mlbam_id,
+        season_a=season_a,
+        comparison_mode=comparison_mode,
+        mlbam_id_b=mlbam_id_b,
+        season_b=season_b,
+        apply_trend_filters=apply_trend_filters,
+        active_filter_summary=active_filter_summary,
     )
     _loaded_trend_ctx = st.session_state.get("_trend_loaded_key")
 

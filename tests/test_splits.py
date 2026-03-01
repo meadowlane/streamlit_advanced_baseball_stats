@@ -29,6 +29,7 @@ from stats.splits import (
     PA_EVENTS,
     BARREL_CODE,
     compute_pitch_arsenal,
+    build_trend_context_key,
 )
 from stats.filters import SplitFilters, prepare_df
 
@@ -664,3 +665,29 @@ class TestComputePitchArsenal:
     def test_missing_pitch_mix_columns_returns_empty(self):
         mix = compute_pitch_arsenal(pd.DataFrame({"pitch_type": ["FF", "SL"]}))
         assert mix.empty
+
+
+class TestBuildTrendContextKey:
+    def test_includes_filter_summary_when_apply_filters_enabled(self):
+        key = build_trend_context_key(
+            mlbam_id=123,
+            season_a=2024,
+            comparison_mode=False,
+            mlbam_id_b=None,
+            season_b=2024,
+            apply_trend_filters=True,
+            active_filter_summary="Inning 1-3 · vs RHP",
+        )
+        assert key == (123, 2024, None, 2024, "Inning 1-3 · vs RHP")
+
+    def test_omits_filter_summary_when_apply_filters_disabled(self):
+        key = build_trend_context_key(
+            mlbam_id=123,
+            season_a=2024,
+            comparison_mode=True,
+            mlbam_id_b=456,
+            season_b=2023,
+            apply_trend_filters=False,
+            active_filter_summary="Inning 1-3 · vs RHP",
+        )
+        assert key == (123, 2024, 456, 2023, "")

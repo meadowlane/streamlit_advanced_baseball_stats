@@ -641,3 +641,27 @@ def get_trend_stats(
         stats["approx_pa"] = sample_sizes.get("approx_PA")
         results.append(stats)
     return results
+
+
+def build_trend_context_key(
+    mlbam_id: int,
+    season_a: int,
+    comparison_mode: bool,
+    mlbam_id_b: int | None,
+    season_b: int,
+    apply_trend_filters: bool,
+    active_filter_summary: str,
+) -> tuple[int, int, int | None, int, str]:
+    """Build the session key that gates trend data loading.
+
+    Includes filter state when trend filters are enabled so UI refresh/load prompts
+    are aligned with what will actually be fetched.
+    """
+    filter_fingerprint = active_filter_summary if apply_trend_filters else ""
+    return (
+        int(mlbam_id),
+        int(season_a),
+        int(mlbam_id_b) if (comparison_mode and mlbam_id_b is not None) else None,
+        int(season_b) if comparison_mode else int(season_a),
+        filter_fingerprint,
+    )
