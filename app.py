@@ -267,6 +267,29 @@ def _sample_size_text(sample_sizes: dict[str, int | None], player_type: str) -> 
     return " | ".join(parts)
 
 
+def _filter_pitch_mix_by_batter_hand(
+    df: pd.DataFrame,
+    batter_hand_filter: str,
+    include_switch_hitters: bool,
+) -> tuple[pd.DataFrame, bool]:
+    """Apply pitcher-view batter handedness filtering for pitch mix tables.
+
+    Returns the filtered DataFrame and a flag indicating whether the ``stand``
+    column was missing while a handedness split was requested.
+    """
+    if batter_hand_filter == "All":
+        return df.copy(), False
+    if "stand" not in df.columns:
+        return df.copy(), True
+
+    stand_vals = df["stand"].fillna("").astype(str).str.upper()
+    if batter_hand_filter == "vs LHB":
+        keep = {"L", "S"} if include_switch_hitters else {"L"}
+    else:
+        keep = {"R", "S"} if include_switch_hitters else {"R"}
+    return df.loc[stand_vals.isin(keep)].copy(), False
+
+
 def _delta_text(stat: str, a_val: float | None, b_val: float | None) -> str:
     if a_val is None or b_val is None:
         return "—"
@@ -1215,16 +1238,56 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 if player_type == "Pitcher":
+    mix_col, _ = st.columns([2.2, 3.8])
+    with mix_col:
+        st.caption("Batter hand")
+        pitch_mix_batter_hand = st.radio(
+            "Batter hand",
+            options=["All", "vs LHB", "vs RHB"],
+            horizontal=True,
+            key="pitch_mix_batter_hand",
+            label_visibility="collapsed",
+        )
+
+    has_stand_for_pitch_mix = "stand" in filtered_df.columns or (
+        comparison_mode and filtered_df_b is not None and "stand" in filtered_df_b.columns
+    )
+    include_switch_hitters = True
+    if pitch_mix_batter_hand != "All" and has_stand_for_pitch_mix:
+        include_switch_hitters = st.checkbox(
+            "Include switch hitters",
+            value=True,
+            key="pitch_mix_include_switch",
+        )
+
+    filtered_mix_df, missing_stand_a = _filter_pitch_mix_by_batter_hand(
+        filtered_df,
+        pitch_mix_batter_hand,
+        include_switch_hitters,
+    )
+
+    filtered_mix_df_b = None
+    missing_stand_b = False
+    if comparison_mode and filtered_df_b is not None:
+        filtered_mix_df_b, missing_stand_b = _filter_pitch_mix_by_batter_hand(
+            filtered_df_b,
+            pitch_mix_batter_hand,
+            include_switch_hitters,
+        )
+
+    if missing_stand_a or missing_stand_b:
+        st.caption("Handedness split unavailable (missing stand).")
+
     if comparison_mode and filtered_df_b is not None:
         col_a_arsenal, col_b_arsenal = st.columns(2)
         with col_a_arsenal:
             st.caption(f"Player A: {selected_name}")
-            render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+            render_pitch_arsenal(compute_pitch_arsenal(filtered_mix_df))
         with col_b_arsenal:
             st.caption(f"Player B: {selected_name_b}")
-            render_pitch_arsenal(compute_pitch_arsenal(filtered_df_b))
+            render_pitch_arsenal(compute_pitch_arsenal(filtered_mix_df_b if filtered_mix_df_b is not None else filtered_df_b))
     else:
-        render_pitch_arsenal(compute_pitch_arsenal(filtered_df))
+        render_pitch_arsenal(compute_pitch_arsenal(filtered_mix_df))
 
 if FEATURE_PITCH_ZONE:
     from ui.components import render_pitch_zone_chart
