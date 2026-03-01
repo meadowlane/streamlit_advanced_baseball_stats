@@ -306,7 +306,7 @@ def _render_player_stat_grid(
                         stat_key=stat,
                         label=label_map.get(stat, stat),
                         value=stat_values.get(stat),
-                        percentile=percentiles.get(stat, np.nan),
+                        percentile=percentiles.get(stat, float("nan")),
                         color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
                     )
                 else:
