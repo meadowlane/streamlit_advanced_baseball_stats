@@ -87,7 +87,18 @@ _QP_SEASON = "season"
 _QP_PLAYER_TYPE = "player_type"
 _QP_PLAYER_NAME = "player_name"
 _QP_PLAYER_ID = "player_id"
-_QP_SYNC_KEYS = (_QP_SEASON, _QP_PLAYER_TYPE, _QP_PLAYER_NAME, _QP_PLAYER_ID)
+_QP_COMPARE = "compare"
+_QP_COMPARE_NAME = "compare_name"
+_QP_COMPARE_ID = "compare_id"
+_QP_SYNC_KEYS = (
+    _QP_SEASON,
+    _QP_PLAYER_TYPE,
+    _QP_PLAYER_NAME,
+    _QP_PLAYER_ID,
+    _QP_COMPARE,
+    _QP_COMPARE_NAME,
+    _QP_COMPARE_ID,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +191,18 @@ def _qp_int(value: object) -> int | None:
         return None
 
 
+def _qp_bool(value: object) -> bool | None:
+    text = _qp_scalar(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def _normalize_player_type(value: object) -> str | None:
     text = _qp_scalar(value)
     if text is None:
@@ -208,12 +231,24 @@ def _hydrate_selection_state_from_query_params() -> None:
         if player_name_qp is not None:
             st.session_state["player_selectbox"] = player_name_qp
 
+    compare_qp = _qp_bool(st.query_params.get(_QP_COMPARE))
+    if "comparison_mode" not in st.session_state and compare_qp is True:
+        st.session_state["comparison_mode"] = True
+    if compare_qp is True and "player_b_selectbox" not in st.session_state:
+        compare_name_qp = _qp_scalar(st.query_params.get(_QP_COMPARE_NAME))
+        if compare_name_qp is not None:
+            st.session_state["player_b_selectbox"] = compare_name_qp
+
     # Selection widgets are name-driven in this app; keep player_id as a URL
     # hint/share token without attempting ID-only name resolution here.
     if "selected_player_id" not in st.session_state:
         player_id_qp = _qp_int(st.query_params.get(_QP_PLAYER_ID))
         if player_id_qp is not None:
             st.session_state["selected_player_id"] = int(player_id_qp)
+    if compare_qp is True and "selected_compare_player_id" not in st.session_state:
+        compare_id_qp = _qp_int(st.query_params.get(_QP_COMPARE_ID))
+        if compare_id_qp is not None:
+            st.session_state["selected_compare_player_id"] = int(compare_id_qp)
 
 
 def _sync_selection_query_params(
@@ -222,6 +257,9 @@ def _sync_selection_query_params(
     player_type: str,
     player_name: str | None,
     player_id: int | None,
+    compare_mode: bool = False,
+    compare_name: str | None = None,
+    compare_id: int | None = None,
 ) -> None:
     """Sync core selector state to URL query params without unnecessary writes."""
     desired: dict[str, str] = {
@@ -232,6 +270,12 @@ def _sync_selection_query_params(
         desired[_QP_PLAYER_NAME] = str(player_name)
     if player_id is not None:
         desired[_QP_PLAYER_ID] = str(int(player_id))
+    if compare_mode:
+        desired[_QP_COMPARE] = "1"
+        if compare_name is not None and str(compare_name).strip():
+            desired[_QP_COMPARE_NAME] = str(compare_name)
+        if compare_id is not None:
+            desired[_QP_COMPARE_ID] = str(int(compare_id))
 
     for key in _QP_SYNC_KEYS:
         current_val = _qp_scalar(st.query_params.get(key))
@@ -1003,11 +1047,13 @@ with st.sidebar:
 
 if selected_name is None:
     st.session_state.pop("selected_player_id", None)
+    st.session_state.pop("selected_compare_player_id", None)
     _sync_selection_query_params(
         season=season_a,
         player_type=player_type,
         player_name=None,
         player_id=None,
+        compare_mode=False,
     )
     st.header("⚾ MLB Splits")
     if season_df.empty and season_df.attrs.get("warning"):
@@ -1042,22 +1088,20 @@ with st.spinner("Resolving player ID…"):
 
 if mlbam_id is None:
     st.session_state.pop("selected_player_id", None)
+    st.session_state.pop("selected_compare_player_id", None)
     _sync_selection_query_params(
         season=season_a,
         player_type=player_type,
         player_name=selected_name,
         player_id=None,
+        compare_mode=bool(comparison_mode),
+        compare_name=selected_name_b,
+        compare_id=None,
     )
     st.error(f"Could not resolve a Statcast ID for {selected_name}.")
     st.stop()
 
 st.session_state["selected_player_id"] = int(mlbam_id)
-_sync_selection_query_params(
-    season=season_a,
-    player_type=player_type,
-    player_name=selected_name,
-    player_id=int(mlbam_id),
-)
 
 team_b = None
 mlbam_id_b = None
@@ -1065,6 +1109,16 @@ player_row_b = None
 if comparison_mode and selected_name_b is not None:
     player_row_b = get_player_row(season_df_b_fg, selected_name_b)
     if player_row_b is None:
+        st.session_state.pop("selected_compare_player_id", None)
+        _sync_selection_query_params(
+            season=season_a,
+            player_type=player_type,
+            player_name=selected_name,
+            player_id=int(mlbam_id),
+            compare_mode=True,
+            compare_name=selected_name_b,
+            compare_id=None,
+        )
         st.warning(
             f"No MLB Statcast data for {selected_name_b} in {season_b}. "
             "Select a different season or use **Clear player B** in the sidebar."
@@ -1078,8 +1132,33 @@ if comparison_mode and selected_name_b is not None:
         mlbam_id_b = get_mlbam_id(fg_id_b, player_name=selected_name_b)
 
     if mlbam_id_b is None:
+        st.session_state.pop("selected_compare_player_id", None)
+        _sync_selection_query_params(
+            season=season_a,
+            player_type=player_type,
+            player_name=selected_name,
+            player_id=int(mlbam_id),
+            compare_mode=True,
+            compare_name=selected_name_b,
+            compare_id=None,
+        )
         st.error(f"Could not resolve a Statcast ID for {selected_name_b}.")
         st.stop()
+
+if comparison_mode and mlbam_id_b is not None:
+    st.session_state["selected_compare_player_id"] = int(mlbam_id_b)
+else:
+    st.session_state.pop("selected_compare_player_id", None)
+
+_sync_selection_query_params(
+    season=season_a,
+    player_type=player_type,
+    player_name=selected_name,
+    player_id=int(mlbam_id),
+    compare_mode=bool(comparison_mode),
+    compare_name=selected_name_b if comparison_mode else None,
+    compare_id=int(mlbam_id_b) if (comparison_mode and mlbam_id_b is not None) else None,
+)
 
 
 # ---------------------------------------------------------------------------
