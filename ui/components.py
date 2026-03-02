@@ -271,14 +271,25 @@ _CARD_CSS = """
     color: #fff;
     background-color: {hex};
 }}
+.stat-card-compact {{
+    padding: 10px 8px 9px;
+}}
+.stat-card-compact .stat-label {{
+    font-size: 10px;
+    margin-bottom: 4px;
+}}
+.stat-card-compact .stat-value {{
+    font-size: 24px;
+    margin-bottom: 6px;
+}}
 </style>
 """
 
 _CARD_HTML = """
-<div class="stat-card">
+<div class="{card_class}">
   <div class="stat-label">{label}</div>
   <div class="stat-value">{value}</div>
-  <div class="stat-badge" style="background-color:{hex};">{pct_str}</div>
+  {badge_html}
 </div>
 """
 
@@ -289,15 +300,27 @@ def stat_card(
     value: float | None,
     percentile: float,
     color_tier: dict[str, str],
+    compact: bool = False,
 ) -> None:
     """Render a single stat card with a colored percentile badge."""
     hex_color = color_tier.get("hex", "#95A5A6")
     # Always format by internal stat key; display label may be an override.
     val_str = format_stat_value(stat_key, value)
     pct_str = format_percentile(percentile)
+    badge_html = (
+        ""
+        if pct_str == "—"
+        else f'<div class="stat-badge" style="background-color:{hex_color};">{pct_str}</div>'
+    )
+    card_class = "stat-card stat-card-compact" if compact else "stat-card"
     st.markdown(
         _CARD_CSS.format(hex=hex_color)
-        + _CARD_HTML.format(label=label, value=val_str, hex=hex_color, pct_str=pct_str),
+        + _CARD_HTML.format(
+            card_class=card_class,
+            label=label,
+            value=val_str,
+            badge_html=badge_html,
+        ),
         unsafe_allow_html=True,
     )
 
@@ -309,6 +332,7 @@ def stat_cards_row(
     stats_order: list[str] | None = None,
     cols_per_row: int | None = None,
     label_overrides: dict[str, str] | None = None,
+    compact: bool = False,
 ) -> None:
     """Render stat cards in a single row or wrapped rows when requested."""
     order = stats_order if stats_order is not None else _ORDERED_STATS
@@ -326,12 +350,15 @@ def stat_cards_row(
                     value=stat_values.get(stat),
                     percentile=percentiles.get(stat, np.nan),
                     color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
+                    compact=compact,
                 )
         return
 
     row_width = max(1, int(cols_per_row))
     label_map = label_overrides or {}
     for start in range(0, len(order), row_width):
+        if start > 0:
+            st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
         row_stats = order[start : start + row_width]
         cols = st.columns(row_width)
         for idx in range(row_width):
@@ -344,6 +371,7 @@ def stat_cards_row(
                         value=stat_values.get(stat),
                         percentile=percentiles.get(stat, np.nan),
                         color_tier=color_tiers.get(stat, {"hex": "#95A5A6"}),
+                        compact=compact,
                     )
                 else:
                     st.empty()

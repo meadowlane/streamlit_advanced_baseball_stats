@@ -92,23 +92,23 @@ PITCHER_STAT_ORDER = (
     + PITCHER_CONTACT_STATS
     + PITCHER_STUFF_STATS
 )
-PITCHER_CORE_PRIMARY_ORDER = [
-    "ERA",
-    "FIP",
-    "xFIP",
-    "SIERA",
-    "xERA",
-    "wOBA",
-    "xwOBA",
-    "K%",
-    "BB%",
-    "K-BB%",
-    "Whiff%",
-    "CSW%",
-    "HardHit%",
-    "Barrel%",
-]
-PITCHER_DEFAULT_STATS = PITCHER_CORE_PRIMARY_ORDER.copy()
+# --- Pitcher Tier 2 (always visible, two labeled groups) ---
+PITCHER_TIER2_OUTCOME = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
+PITCHER_TIER2_DOMINANCE = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+
+# --- Pitcher Tier 3 (behind expander) ---
+PITCHER_TIER3_CONTACT = ["HardHit%", "Barrel%", "GB%"]
+PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%"]
+PITCHER_TIER3_STATS = PITCHER_TIER3_CONTACT + PITCHER_TIER3_STUFF
+
+# --- Batter Tiers ---
+BATTER_TIER2_STATS = ["wRC+", "xwOBA", "wOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+BATTER_TIER3_STATS = ["GB%", "AVG", "OBP", "SLG", "OPS"]
+
+# Backwards-compat alias (used elsewhere e.g. _render_player_stat_grid ordering)
+PITCHER_CORE_PRIMARY_ORDER = PITCHER_TIER2_OUTCOME + PITCHER_TIER2_DOMINANCE
+# Default to all stats so Tier 2 + Tier 3 expander both appear on first load
+PITCHER_DEFAULT_STATS = PITCHER_STAT_ORDER.copy()
 PITCHER_SEASON_ONLY_STAT_COLS: dict[str, list[str]] = {
     "W": ["W"],
     "L": ["L"],
@@ -156,6 +156,16 @@ _QP_SYNC_KEYS = (
     _QP_COMPARE_NAME,
     _QP_COMPARE_ID,
 )
+
+
+# Widget keys are mode-specific so Streamlit preserves batter and pitcher
+# selections independently across player-type switches.
+def _player_a_widget_key(player_type: str) -> str:
+    return "player_a_pitcher" if player_type == "Pitcher" else "player_a_batter"
+
+
+def _player_b_widget_key(player_type: str) -> str:
+    return "player_b_pitcher" if player_type == "Pitcher" else "player_b_batter"
 
 
 # ---------------------------------------------------------------------------
@@ -292,18 +302,21 @@ def _hydrate_selection_state_from_query_params() -> None:
         if player_type_qp is not None:
             st.session_state["player_type"] = player_type_qp
 
-    if "player_selectbox" not in st.session_state:
+    active_player_type = st.session_state.get("player_type", DEFAULT_PLAYER_TYPE)
+    player_a_key = _player_a_widget_key(active_player_type)
+    if player_a_key not in st.session_state:
         player_name_qp = _qp_scalar(st.query_params.get(_QP_PLAYER_NAME))
         if player_name_qp is not None:
-            st.session_state["player_selectbox"] = player_name_qp
+            st.session_state[player_a_key] = player_name_qp
 
     compare_qp = _qp_bool(st.query_params.get(_QP_COMPARE))
     if "comparison_mode" not in st.session_state and compare_qp is True:
         st.session_state["comparison_mode"] = True
-    if compare_qp is True and "player_b_selectbox" not in st.session_state:
+    player_b_key = _player_b_widget_key(active_player_type)
+    if compare_qp is True and player_b_key not in st.session_state:
         compare_name_qp = _qp_scalar(st.query_params.get(_QP_COMPARE_NAME))
         if compare_name_qp is not None:
-            st.session_state["player_b_selectbox"] = compare_name_qp
+            st.session_state[player_b_key] = compare_name_qp
 
     # Selection widgets are name-driven in this app; keep player_id as a URL
     # hint/share token without attempting ID-only name resolution here.
@@ -480,12 +493,164 @@ def _format_pitcher_headline_line(season_stats: dict[str, float | None]) -> str:
     wins = season_stats.get("W")
     losses = season_stats.get("L")
     ip = season_stats.get("IP")
-    era = season_stats.get("ERA")
+    fip = season_stats.get("FIP")
 
     wl_part = "—" if wins is None or losses is None else f"{int(round(wins))}\u2013{int(round(losses))}"
     ip_part = "—" if ip is None else f"{float(ip):.1f} IP"
-    era_part = "—" if era is None else f"{float(era):.2f} ERA"
-    return f"{wl_part} • {ip_part} • {era_part}"
+    fip_part = "—" if fip is None else f"{float(fip):.2f} FIP"
+    return f"{wl_part} • {ip_part} • {fip_part}"
+
+
+def _format_batter_headline_line(player_row: "pd.Series | None") -> str:
+    """Compact season-stat headline, e.g. '147 wRC+  •  .287/.382/.531  •  .402 wOBA'."""
+    if player_row is None:
+        return "—"
+    wrc = _as_optional_float(player_row.get("wRC+"))
+    avg = _as_optional_float(player_row.get("AVG"))
+    obp = _as_optional_float(player_row.get("OBP"))
+    slg = _as_optional_float(player_row.get("SLG"))
+    woba = _as_optional_float(player_row.get("wOBA"))
+
+    wrc_part = "—" if wrc is None else f"{int(round(wrc))} wRC+"
+    woba_part = "—" if woba is None else f".{int(round(woba * 1000)):03d} wOBA"
+    if avg is None or obp is None or slg is None:
+        slash_part = "—"
+    else:
+        slash_part = f".{int(round(avg * 1000)):03d}/.{int(round(obp * 1000)):03d}/.{int(round(slg * 1000)):03d}"
+    return f"{wrc_part}  •  {slash_part}  •  {woba_part}"
+
+
+def _render_headline_md(text: str) -> None:
+    """Render a headline stat line in large bold text."""
+    st.markdown(
+        f'<p style="font-size:22px;font-weight:700;color:#f0f0f0;'
+        f'line-height:1.2;margin:0 0 8px">{text}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_section_heading(title: str, *, top_margin_px: int = 14) -> None:
+    """Render a consistent subsection heading with breathing room."""
+    st.markdown(
+        f'<p style="font-size:15px;font-weight:700;color:rgba(255,255,255,0.92);'
+        f'letter-spacing:0.01em;margin:{int(top_margin_px)}px 0 8px;">{title}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_batter_headline_md(player_row: "pd.Series | None", sample_text: str | None = None) -> None:
+    """Render batter headline with wRC+ emphasis and secondary slash/wOBA line."""
+    if player_row is None:
+        st.markdown(
+            '<p style="font-size:26px;font-weight:800;color:#f0f0f0;line-height:1.1;margin:0 0 2px;">—</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        wrc = _as_optional_float(player_row.get("wRC+"))
+        avg = _as_optional_float(player_row.get("AVG"))
+        obp = _as_optional_float(player_row.get("OBP"))
+        slg = _as_optional_float(player_row.get("SLG"))
+        woba = _as_optional_float(player_row.get("wOBA"))
+
+        wrc_part = "—" if wrc is None else f"{int(round(wrc))} wRC+"
+        woba_part = "—" if woba is None else f".{int(round(woba * 1000)):03d} wOBA"
+        if avg is None or obp is None or slg is None:
+            slash_part = "—"
+        else:
+            slash_part = (
+                f".{int(round(avg * 1000)):03d}/"
+                f".{int(round(obp * 1000)):03d}/"
+                f".{int(round(slg * 1000)):03d}"
+            )
+
+        st.markdown(
+            (
+                '<div style="margin:0 0 2px;">'
+                f'<p style="font-size:27px;font-weight:800;color:#f5f5f5;line-height:1.1;margin:0 0 2px;">{wrc_part}</p>'
+                '<p style="font-size:15px;font-weight:500;color:rgba(255,255,255,0.72);line-height:1.2;margin:0;">'
+                f'{slash_part} <span style="color:rgba(255,255,255,0.42);">•</span> '
+                f'<span style="color:rgba(255,255,255,0.82);">{woba_part}</span>'
+                "</p></div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    if sample_text is not None:
+        st.caption(f"Sample size: {sample_text}")
+
+
+def _render_subheading_md(team: str, season: int) -> None:
+    """Render team · season in slightly-larger subdued text, no player type."""
+    st.markdown(
+        f'<p style="font-size:15px;color:rgba(255,255,255,0.55);'
+        f'margin:-4px 0 6px">{team} · {season}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_pitcher_stats_tiered(
+    player_stats: dict[str, float | None],
+    percentiles: dict[str, float],
+    color_tiers: dict[str, dict[str, str]],
+    selected_stats: list[str],
+) -> None:
+    """Render pitcher stat cards in labeled tier groups with a Tier 3 expander."""
+    tier2_outcome = [s for s in PITCHER_TIER2_OUTCOME if s in selected_stats]
+    tier2_dominance = [s for s in PITCHER_TIER2_DOMINANCE if s in selected_stats]
+    tier3 = [s for s in PITCHER_TIER3_STATS if s in selected_stats]
+    # Absorb any user-selected stats not covered by explicit tiers (e.g. FB%)
+    covered = set(tier2_outcome) | set(tier2_dominance) | set(tier3)
+    tier3 += [s for s in PITCHER_STAT_ORDER if s in selected_stats and s not in covered]
+
+    if tier2_outcome:
+        _render_section_heading("Run Prevention", top_margin_px=4)
+        stat_cards_row(
+            player_stats, percentiles, color_tiers,
+            stats_order=tier2_outcome, cols_per_row=3,
+            label_overrides=_PITCHER_STAT_LABELS,
+        )
+
+    if tier2_dominance:
+        _render_section_heading("Command & Dominance")
+        stat_cards_row(
+            player_stats, percentiles, color_tiers,
+            stats_order=tier2_dominance, cols_per_row=2,
+            label_overrides=_PITCHER_STAT_LABELS,
+        )
+
+    if tier3:
+        _render_section_heading("Contact Quality & Stuff")
+        stat_cards_row(
+            player_stats, percentiles, color_tiers,
+            stats_order=tier3, cols_per_row=2,
+            label_overrides=_PITCHER_STAT_LABELS,
+        )
+
+    if not (tier2_outcome or tier2_dominance or tier3):
+        st.info("No stats selected.")
+
+
+def _render_batter_stats_tiered(
+    player_stats: dict[str, float | None],
+    percentiles: dict[str, float],
+    color_tiers: dict[str, dict[str, str]],
+    selected_stats: list[str],
+) -> None:
+    """Render batter stat cards: Tier 2 core row + Tier 3 expander."""
+    tier2 = [s for s in BATTER_TIER2_STATS if s in selected_stats]
+    tier3 = [s for s in BATTER_TIER3_STATS if s in selected_stats]
+    covered = set(tier2) | set(tier3)
+    tier3 += [s for s in selected_stats if s not in covered]
+
+    if tier2:
+        stat_cards_row(player_stats, percentiles, color_tiers,
+                       stats_order=tier2, cols_per_row=3)
+
+    if tier3:
+        stat_cards_row(player_stats, percentiles, color_tiers,
+                       stats_order=tier3, cols_per_row=3)
+
+    if not (tier2 or tier3):
+        st.info("No stats selected.")
 
 
 def _merge_batter_wrc_plus(base_df: pd.DataFrame, season: int, context: str) -> pd.DataFrame:
@@ -704,14 +869,14 @@ with st.sidebar:
         if "player_type" not in st.session_state:
             st.session_state["player_type"] = DEFAULT_PLAYER_TYPE
         player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True, key="player_type")
+    player_a_key = _player_a_widget_key(player_type)
+    player_b_key = _player_b_widget_key(player_type)
 
     _prev_player_type = st.session_state.get("_prev_player_type")
     if _prev_player_type is None:
         st.session_state["_prev_player_type"] = player_type
     elif _prev_player_type != player_type:
         st.session_state["_prev_player_type"] = player_type
-        st.session_state["player_selectbox"] = None
-        st.session_state["player_b_selectbox"] = None
         st.session_state.pop("selected_stats_requested", None)
         st.session_state.pop("trend_custom_stats", None)
         for stat in CORE_STATS + BATTER_EXTRA_STATS + PITCHER_EXTRA_STATS:
@@ -783,16 +948,16 @@ with st.sidebar:
 
             parsed_player_a = parsed_intent.get("player_a")
             if parsed_player_a is not None:
-                st.session_state["player_selectbox"] = parsed_player_a
+                st.session_state[player_a_key] = parsed_player_a
 
             parsed_comparison = bool(parsed_intent.get("comparison_mode"))
             parsed_player_b = parsed_intent.get("player_b")
             if parsed_comparison:
                 st.session_state["comparison_mode"] = True
-                st.session_state["player_b_selectbox"] = parsed_player_b
+                st.session_state[player_b_key] = parsed_player_b
             else:
                 st.session_state["comparison_mode"] = False
-                st.session_state["player_b_selectbox"] = None
+                st.session_state[player_b_key] = None
                 st.session_state["link_seasons"] = True
 
             parsed_rows = parsed_intent.get("filter_rows", [])
@@ -840,34 +1005,28 @@ with st.sidebar:
 
     # ── Player A ──────────────────────────────────────────────────────────────
     # Preserve the selected player across season changes.
-    # If they didn't qualify this season (< 50 PA), inject their name so the
-    # widget keeps showing it; a warning is surfaced below and in the main area.
-    #
     # Clear logic: the button sets a pending flag; we honour it here, *before*
     # the widget is instantiated, which is the only point Streamlit allows
     # writing to a widget's own session-state key.
-    if st.session_state.pop("_clear_player_pending", False):
-        st.session_state["player_selectbox"] = None
+    clear_player_pending_key = f"_clear_player_pending_{player_type.lower()}"
+    if st.session_state.pop(clear_player_pending_key, False):
+        st.session_state[player_a_key] = None
 
-    _prev_player = st.session_state.get("player_selectbox")
-    _player_not_in_season = _prev_player is not None and _prev_player not in player_names
-    if _player_not_in_season:
-        player_names = [_prev_player] + player_names
+    if st.session_state.get(player_a_key) not in player_names:
+        st.session_state[player_a_key] = None
+    _prev_player = st.session_state.get(player_a_key)
 
     selected_name = st.selectbox(
         "Player",
         options=player_names,
         index=None,
         placeholder="Type to search…",
-        key="player_selectbox",
+        key=player_a_key,
     )
-
-    if _player_not_in_season and selected_name == _prev_player:
-        st.warning(f"No MLB Statcast data for {selected_name} in {season_a}.")
 
     if selected_name is not None:
         if st.button("Clear player", width="stretch"):
-            st.session_state["_clear_player_pending"] = True
+            st.session_state[clear_player_pending_key] = True
             st.rerun()
 
     # ── Comparison mode + Player B ────────────────────────────────────────────
@@ -890,8 +1049,9 @@ with st.sidebar:
 
         season_b = st.session_state["season_b"]
 
-        if st.session_state.pop("_clear_player_b_pending", False):
-            st.session_state["player_b_selectbox"] = None
+        clear_player_b_pending_key = f"_clear_player_b_pending_{player_type.lower()}"
+        if st.session_state.pop(clear_player_b_pending_key, False):
+            st.session_state[player_b_key] = None
 
         # Load Player B's FG data for the correct season (may differ from A when unlinked).
         if not link_seasons and season_b != season_a:
@@ -913,27 +1073,21 @@ with st.sidebar:
         else:
             player_b_names = [n for n in player_names if n != selected_name]
 
-        _prev_player_b = st.session_state.get("player_b_selectbox")
-        _player_b_not_in_season = (
-            _prev_player_b is not None and _prev_player_b not in player_b_names
-        )
-        if _player_b_not_in_season:
-            player_b_names = [_prev_player_b] + player_b_names
+        if st.session_state.get(player_b_key) not in player_b_names:
+            st.session_state[player_b_key] = None
+        _prev_player_b = st.session_state.get(player_b_key)
 
         selected_name_b = st.selectbox(
             "Player B",
             options=player_b_names,
             index=None,
             placeholder="Type to search…",
-            key="player_b_selectbox",
+            key=player_b_key,
         )
-
-        if _player_b_not_in_season and selected_name_b == _prev_player_b:
-            st.warning(f"No MLB Statcast data for {selected_name_b} in {season_b}.")
 
         if selected_name_b is not None:
             if st.button("Clear player B", width="stretch"):
-                st.session_state["_clear_player_b_pending"] = True
+                st.session_state[clear_player_b_pending_key] = True
                 st.rerun()
     else:
         link_seasons = True
@@ -941,20 +1095,8 @@ with st.sidebar:
         st.session_state["season_b"] = season_a
         season_b = season_a
 
-    if player_type == "Batter":
-        with st.expander("Options", expanded=False):
-            show_trad = st.toggle(
-                "Show traditional slash stats (AVG/OBP/SLG/OPS)",
-                value=False,
-                key="show_traditional_batting_stats",
-            )
-            _ = show_trad
-
     # ── Stats to show ─────────────────────────────────────────────────────────
-    show_traditional_batting_stats = bool(st.session_state.get("show_traditional_batting_stats", False))
     batter_stats_catalog = BATTER_STAT_ORDER.copy()
-    if show_traditional_batting_stats:
-        batter_stats_catalog = batter_stats_catalog + TRADITIONAL_STATS
 
     pitcher_stats_catalog = _build_pitcher_stats_catalog(season_df)
     pitcher_default_stats = [stat for stat in PITCHER_DEFAULT_STATS if stat in pitcher_stats_catalog]
@@ -967,26 +1109,6 @@ with st.sidebar:
             if player_type == "Pitcher"
             else _DEFAULT_STATS.copy()
         )
-
-    if player_type == "Batter":
-        prev_toggle_key = "show_traditional_batting_stats_prev"
-        if prev_toggle_key not in st.session_state:
-            st.session_state[prev_toggle_key] = show_traditional_batting_stats
-        prev_show_traditional = bool(st.session_state.get(prev_toggle_key, show_traditional_batting_stats))
-        selected_stats_state = list(st.session_state.get(stats_selection_key, _DEFAULT_STATS.copy()))
-
-        if show_traditional_batting_stats and not prev_show_traditional:
-            selected_stats_state = list(dict.fromkeys(selected_stats_state + TRADITIONAL_STATS))
-            st.session_state[stats_selection_key] = selected_stats_state
-            for stat in TRADITIONAL_STATS:
-                st.session_state[f"stat_show_{stat}"] = True
-        elif (not show_traditional_batting_stats) and prev_show_traditional:
-            selected_stats_state = [stat for stat in selected_stats_state if stat not in TRADITIONAL_STATS]
-            st.session_state[stats_selection_key] = selected_stats_state
-            for stat in TRADITIONAL_STATS:
-                st.session_state[f"stat_show_{stat}"] = False
-
-        st.session_state[prev_toggle_key] = show_traditional_batting_stats
 
     _selected_count = sum(
         1 for stat in stats_catalog if st.session_state.get(f"stat_show_{stat}", True)
@@ -1364,10 +1486,6 @@ if comparison_mode and statcast_df_b is not None:
     validation_frames.append((selected_name_b, statcast_df_b))
 
 for stat in selected_stats_requested:
-    if stat in TRADITIONAL_STATS and player_type == "Batter":
-        selected_stats.append(stat)
-        continue
-
     if stat == "wRC+" and player_type == "Batter":
         selected_stats.append(stat)
         continue
@@ -1415,6 +1533,11 @@ if player_type == "Batter":
 elif player_type == "Pitcher":
     _raw = _merge_pitcher_season_stats(_raw, pitcher_season_stats)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
+traditional_stats = (
+    {stat: _raw.get(stat) for stat in TRADITIONAL_STATS}
+    if player_type == "Batter"
+    else {}
+)
 
 distributions = (
     build_pitcher_league_distributions(season_df)
@@ -1433,10 +1556,23 @@ if player_type == "Batter":
                 distributions[stat] = stat_values
 percentiles   = get_all_percentiles(player_stats, distributions, player_type=player_type)
 color_tiers   = get_all_color_tiers(percentiles)
+traditional_percentiles = (
+    get_all_percentiles(traditional_stats, distributions, player_type=player_type)
+    if player_type == "Batter"
+    else None
+)
+traditional_color_tiers = (
+    get_all_color_tiers(traditional_percentiles)
+    if traditional_percentiles is not None
+    else None
+)
 
 player_stats_b = None
 percentiles_b = None
 color_tiers_b = None
+traditional_stats_b = None
+traditional_percentiles_b = None
+traditional_color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
     if player_type == "Batter" and player_row_b is not None:
@@ -1446,6 +1582,8 @@ if comparison_mode and filtered_df_b is not None:
     elif player_type == "Pitcher":
         _raw_b = _merge_pitcher_season_stats(_raw_b, pitcher_season_stats_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
+    if player_type == "Batter":
+        traditional_stats_b = {stat: _raw_b.get(stat) for stat in TRADITIONAL_STATS}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
         build_pitcher_league_distributions(season_df_b_fg)
@@ -1468,6 +1606,11 @@ if comparison_mode and filtered_df_b is not None:
                     distributions_b[stat] = stat_values_b
     percentiles_b = get_all_percentiles(player_stats_b, distributions_b, player_type=player_type)
     color_tiers_b = get_all_color_tiers(percentiles_b)
+    if player_type == "Batter" and traditional_stats_b is not None:
+        traditional_percentiles_b = get_all_percentiles(
+            traditional_stats_b, distributions_b, player_type=player_type
+        )
+        traditional_color_tiers_b = get_all_color_tiers(traditional_percentiles_b)
 
 
 # ---------------------------------------------------------------------------
@@ -1477,30 +1620,40 @@ if comparison_mode and filtered_df_b is not None:
 if comparison_mode and team_b is not None:
     if season_a != season_b:
         st.subheader(f"{selected_name} ({season_a}) vs {selected_name_b} ({season_b})")
-        st.caption(f"{team} vs {team_b} · {player_type}")
+        st.caption(f"{team} vs {team_b}")
     else:
         st.subheader(f"{selected_name} vs {selected_name_b}")
-        st.caption(f"{team} vs {team_b} · {season_a} · {player_type}")
+        st.caption(f"{team} vs {team_b} · {season_a}")
     if player_type == "Pitcher":
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
-            st.caption(f"{team} · {season_a} · Pitcher")
-            st.caption(_format_pitcher_headline_line(pitcher_season_stats))
+            _render_subheading_md(team, season_a)
+            _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
-            st.caption(f"{team_b} · {season_b} · Pitcher")
-            st.caption(_format_pitcher_headline_line(pitcher_season_stats_b))
+            _render_subheading_md(team_b, season_b)
+            _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats_b))
+    else:
+        header_col_a, header_col_b = st.columns(2)
+        with header_col_a:
+            st.markdown(f"**{selected_name}**")
+            _render_subheading_md(team, season_a)
+            _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
+        with header_col_b:
+            st.markdown(f"**{selected_name_b}**")
+            _render_subheading_md(team_b, season_b)
+            sample_text_b = _sample_size_text(sample_sizes_b, player_type) if sample_sizes_b is not None else None
+            _render_batter_headline_md(player_row_b, sample_text_b)
 else:
     if player_type == "Pitcher":
         st.subheader(selected_name)
-        st.caption(f"{team} · {season_a} · {player_type}")
-        st.caption(_format_pitcher_headline_line(pitcher_season_stats))
+        _render_subheading_md(team, season_a)
+        _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
     else:
-        player_header(selected_name, team, season_a, player_type)
-
-if player_type == "Pitcher" and active_filter_summary != "No filters (full season data)":
-    st.caption("W\u2013L / IP / ERA are season-level and are not affected by filters.")
+        st.subheader(selected_name)
+        _render_subheading_md(team, season_a)
+        _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
 
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
@@ -1518,12 +1671,17 @@ else:
     st.caption(f"Active filters: {active_filter_summary}")
 
 st.subheader("Season Stats")
+if player_type == "Pitcher":
+    st.caption("Season-level metrics are preserved where filter-level equivalents are unavailable.")
+else:
+    st.caption("Season-level (not filter-affected): wRC+ and traditional slash stats.")
 pitcher_label_overrides = _PITCHER_STAT_LABELS if player_type == "Pitcher" else None
 if comparison_mode and player_stats_b is not None and percentiles_b is not None and color_tiers_b is not None:
     col_a, col_b, col_delta = st.columns(3)
     with col_a:
         st.markdown(f"**{selected_name}**")
-        st.caption(_sample_size_text(sample_sizes, player_type))
+        if player_type == "Pitcher":
+            st.caption(_sample_size_text(sample_sizes, player_type))
         _render_player_stat_grid(
             player_stats,
             percentiles,
@@ -1533,7 +1691,8 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
         )
     with col_b:
         st.markdown(f"**{selected_name_b}**")
-        st.caption(_sample_size_text(sample_sizes_b, player_type))
+        if player_type == "Pitcher":
+            st.caption(_sample_size_text(sample_sizes_b, player_type))
         _render_player_stat_grid(
             player_stats_b,
             percentiles_b,
@@ -1556,41 +1715,56 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
             label_overrides=pitcher_label_overrides,
         )
 else:
-    st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
     if player_type == "Pitcher":
-        ordered_selected_stats = [stat for stat in PITCHER_STAT_ORDER if stat in selected_stats]
-        primary_core_stats = [stat for stat in PITCHER_CORE_PRIMARY_ORDER if stat in ordered_selected_stats]
-        secondary_stats = [stat for stat in ordered_selected_stats if stat not in primary_core_stats]
-
-        if primary_core_stats:
-            st.markdown("**Core Pitching Stats**")
-            stat_cards_row(
-                player_stats,
-                percentiles,
-                color_tiers,
-                stats_order=primary_core_stats,
-                cols_per_row=3,
-                label_overrides=_PITCHER_STAT_LABELS,
-            )
-            st.caption(
-                "Priority: run prevention/outcomes -> dominance/control -> contact quality."
-            )
-
-        if secondary_stats:
-            with st.expander("More Pitching Metrics", expanded=False):
-                stat_cards_row(
-                    player_stats,
-                    percentiles,
-                    color_tiers,
-                    stats_order=secondary_stats,
-                    cols_per_row=3,
-                    label_overrides=_PITCHER_STAT_LABELS,
-                )
-
-        if not (primary_core_stats or secondary_stats):
-            st.info("No stats selected.")
+        st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
+    if player_type == "Pitcher":
+        _render_pitcher_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
     else:
-        stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
+        _render_batter_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
+
+if (
+    player_type == "Batter"
+    and traditional_percentiles is not None
+    and traditional_color_tiers is not None
+):
+    _render_section_heading("Traditional Stats", top_margin_px=18)
+    st.caption("Slash line + OPS (percentiles vs qualified hitters).")
+    if (
+        comparison_mode
+        and traditional_stats_b is not None
+        and traditional_percentiles_b is not None
+        and traditional_color_tiers_b is not None
+    ):
+        trad_col_a, trad_col_b = st.columns(2)
+        with trad_col_a:
+            st.markdown(f"**{selected_name}**")
+            stat_cards_row(
+                traditional_stats,
+                traditional_percentiles,
+                traditional_color_tiers,
+                stats_order=TRADITIONAL_STATS,
+                cols_per_row=2,
+                compact=True,
+            )
+        with trad_col_b:
+            st.markdown(f"**{selected_name_b}**")
+            stat_cards_row(
+                traditional_stats_b,
+                traditional_percentiles_b,
+                traditional_color_tiers_b,
+                stats_order=TRADITIONAL_STATS,
+                cols_per_row=2,
+                compact=True,
+            )
+    else:
+        stat_cards_row(
+            traditional_stats,
+            traditional_percentiles,
+            traditional_color_tiers,
+            stats_order=TRADITIONAL_STATS,
+            cols_per_row=2,
+            compact=True,
+        )
 
 st.divider()
 
