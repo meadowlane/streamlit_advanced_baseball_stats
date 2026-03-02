@@ -102,7 +102,7 @@ PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%"]
 PITCHER_TIER3_STATS = PITCHER_TIER3_CONTACT + PITCHER_TIER3_STUFF
 
 # --- Batter Tiers ---
-BATTER_TIER2_STATS = ["xwOBA", "wOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+BATTER_TIER2_STATS = ["wRC+", "xwOBA", "wOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 BATTER_TIER3_STATS = ["GB%", "AVG", "OBP", "SLG", "OPS"]
 
 # Backwards-compat alias (used elsewhere e.g. _render_player_stat_grid ordering)
@@ -583,7 +583,7 @@ def _render_batter_stats_tiered(
     _batter_season_only = {"wRC+", "AVG", "OBP", "SLG", "OPS"}
     tier2 = [s for s in BATTER_TIER2_STATS if s in selected_stats]
     tier3 = [s for s in BATTER_TIER3_STATS if s in selected_stats]
-    covered = set(tier2) | set(tier3) | {"wRC+"}
+    covered = set(tier2) | set(tier3)
     tier3 += [s for s in selected_stats if s not in covered]
 
     if tier2:
