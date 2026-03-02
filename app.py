@@ -92,23 +92,23 @@ PITCHER_STAT_ORDER = (
     + PITCHER_CONTACT_STATS
     + PITCHER_STUFF_STATS
 )
-PITCHER_CORE_PRIMARY_ORDER = [
-    "ERA",
-    "FIP",
-    "xFIP",
-    "SIERA",
-    "xERA",
-    "wOBA",
-    "xwOBA",
-    "K%",
-    "BB%",
-    "K-BB%",
-    "Whiff%",
-    "CSW%",
-    "HardHit%",
-    "Barrel%",
-]
-PITCHER_DEFAULT_STATS = PITCHER_CORE_PRIMARY_ORDER.copy()
+# --- Pitcher Tier 2 (always visible, two labeled groups) ---
+PITCHER_TIER2_OUTCOME = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
+PITCHER_TIER2_DOMINANCE = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+
+# --- Pitcher Tier 3 (behind expander) ---
+PITCHER_TIER3_CONTACT = ["HardHit%", "Barrel%", "GB%"]
+PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%"]
+PITCHER_TIER3_STATS = PITCHER_TIER3_CONTACT + PITCHER_TIER3_STUFF
+
+# --- Batter Tiers ---
+BATTER_TIER2_STATS = ["xwOBA", "wOBA", "K%", "BB%", "HardHit%", "Barrel%"]
+BATTER_TIER3_STATS = ["GB%", "AVG", "OBP", "SLG", "OPS"]
+
+# Backwards-compat alias (used elsewhere e.g. _render_player_stat_grid ordering)
+PITCHER_CORE_PRIMARY_ORDER = PITCHER_TIER2_OUTCOME + PITCHER_TIER2_DOMINANCE
+# Default to all stats so Tier 2 + Tier 3 expander both appear on first load
+PITCHER_DEFAULT_STATS = PITCHER_STAT_ORDER.copy()
 PITCHER_SEASON_ONLY_STAT_COLS: dict[str, list[str]] = {
     "W": ["W"],
     "L": ["L"],
@@ -480,12 +480,108 @@ def _format_pitcher_headline_line(season_stats: dict[str, float | None]) -> str:
     wins = season_stats.get("W")
     losses = season_stats.get("L")
     ip = season_stats.get("IP")
-    era = season_stats.get("ERA")
+    fip = season_stats.get("FIP")
 
     wl_part = "—" if wins is None or losses is None else f"{int(round(wins))}\u2013{int(round(losses))}"
     ip_part = "—" if ip is None else f"{float(ip):.1f} IP"
-    era_part = "—" if era is None else f"{float(era):.2f} ERA"
-    return f"{wl_part} • {ip_part} • {era_part}"
+    fip_part = "—" if fip is None else f"{float(fip):.2f} FIP"
+    return f"{wl_part} • {ip_part} • {fip_part}"
+
+
+def _format_batter_headline_line(player_row: "pd.Series | None") -> str:
+    """Compact season-stat headline, e.g. '147 wRC+  •  .287/.382/.531  •  .402 wOBA'."""
+    if player_row is None:
+        return "—"
+    wrc = _as_optional_float(player_row.get("wRC+"))
+    avg = _as_optional_float(player_row.get("AVG"))
+    obp = _as_optional_float(player_row.get("OBP"))
+    slg = _as_optional_float(player_row.get("SLG"))
+    woba = _as_optional_float(player_row.get("wOBA"))
+
+    wrc_part = "—" if wrc is None else f"{int(round(wrc))} wRC+"
+    woba_part = "—" if woba is None else f".{int(round(woba * 1000)):03d} wOBA"
+    if avg is None or obp is None or slg is None:
+        slash_part = "—"
+    else:
+        slash_part = f".{int(round(avg * 1000)):03d}/.{int(round(obp * 1000)):03d}/.{int(round(slg * 1000)):03d}"
+    return f"{wrc_part}  •  {slash_part}  •  {woba_part}"
+
+
+def _render_pitcher_stats_tiered(
+    player_stats: dict[str, float | None],
+    percentiles: dict[str, float],
+    color_tiers: dict[str, dict[str, str]],
+    selected_stats: list[str],
+) -> None:
+    """Render pitcher stat cards in labeled tier groups with a Tier 3 expander."""
+    tier2_outcome = [s for s in PITCHER_TIER2_OUTCOME if s in selected_stats]
+    tier2_dominance = [s for s in PITCHER_TIER2_DOMINANCE if s in selected_stats]
+    tier3 = [s for s in PITCHER_TIER3_STATS if s in selected_stats]
+    # Absorb any user-selected stats not covered by explicit tiers (e.g. FB%)
+    covered = set(tier2_outcome) | set(tier2_dominance) | set(tier3)
+    tier3 += [s for s in PITCHER_STAT_ORDER if s in selected_stats and s not in covered]
+
+    if tier2_outcome:
+        st.markdown("**Run Prevention**")
+        stat_cards_row(
+            player_stats, percentiles, color_tiers,
+            stats_order=tier2_outcome, cols_per_row=3,
+            label_overrides=_PITCHER_STAT_LABELS,
+        )
+        season_only = [s for s in tier2_outcome if s in PITCHER_SEASON_ONLY_STATS]
+        if season_only:
+            st.caption(f"Season-level (not filter-affected): {', '.join(season_only)}.")
+
+    if tier2_dominance:
+        st.markdown("**Command & Dominance**")
+        stat_cards_row(
+            player_stats, percentiles, color_tiers,
+            stats_order=tier2_dominance, cols_per_row=3,
+            label_overrides=_PITCHER_STAT_LABELS,
+        )
+
+    if tier3:
+        with st.expander("Contact Quality & Stuff", expanded=False):
+            stat_cards_row(
+                player_stats, percentiles, color_tiers,
+                stats_order=tier3, cols_per_row=3,
+                label_overrides=_PITCHER_STAT_LABELS,
+            )
+            season_only = [s for s in tier3 if s in PITCHER_SEASON_ONLY_STATS]
+            if season_only:
+                st.caption(f"Season-level: {', '.join(season_only)}.")
+
+    if not (tier2_outcome or tier2_dominance or tier3):
+        st.info("No stats selected.")
+
+
+def _render_batter_stats_tiered(
+    player_stats: dict[str, float | None],
+    percentiles: dict[str, float],
+    color_tiers: dict[str, dict[str, str]],
+    selected_stats: list[str],
+) -> None:
+    """Render batter stat cards: Tier 2 core row + Tier 3 expander."""
+    _batter_season_only = {"wRC+", "AVG", "OBP", "SLG", "OPS"}
+    tier2 = [s for s in BATTER_TIER2_STATS if s in selected_stats]
+    tier3 = [s for s in BATTER_TIER3_STATS if s in selected_stats]
+    covered = set(tier2) | set(tier3) | {"wRC+"}
+    tier3 += [s for s in selected_stats if s not in covered]
+
+    if tier2:
+        stat_cards_row(player_stats, percentiles, color_tiers,
+                       stats_order=tier2, cols_per_row=3)
+
+    if tier3:
+        with st.expander("More Batting Metrics", expanded=False):
+            stat_cards_row(player_stats, percentiles, color_tiers,
+                           stats_order=tier3, cols_per_row=3)
+            season_only = [s for s in tier3 if s in _batter_season_only]
+            if season_only:
+                st.caption(f"Season-level (not filter-affected): {', '.join(season_only)}.")
+
+    if not (tier2 or tier3):
+        st.info("No stats selected.")
 
 
 def _merge_batter_wrc_plus(base_df: pd.DataFrame, season: int, context: str) -> pd.DataFrame:
@@ -1491,16 +1587,25 @@ if comparison_mode and team_b is not None:
             st.markdown(f"**{selected_name_b}**")
             st.caption(f"{team_b} · {season_b} · Pitcher")
             st.caption(_format_pitcher_headline_line(pitcher_season_stats_b))
+    else:
+        header_col_a, header_col_b = st.columns(2)
+        with header_col_a:
+            st.markdown(f"**{selected_name}**")
+            st.caption(f"{team} · {season_a} · Batter")
+            st.caption(_format_batter_headline_line(player_row))
+        with header_col_b:
+            st.markdown(f"**{selected_name_b}**")
+            st.caption(f"{team_b} · {season_b} · Batter")
+            st.caption(_format_batter_headline_line(player_row_b))
 else:
     if player_type == "Pitcher":
         st.subheader(selected_name)
         st.caption(f"{team} · {season_a} · {player_type}")
         st.caption(_format_pitcher_headline_line(pitcher_season_stats))
     else:
-        player_header(selected_name, team, season_a, player_type)
-
-if player_type == "Pitcher" and active_filter_summary != "No filters (full season data)":
-    st.caption("W\u2013L / IP / ERA are season-level and are not affected by filters.")
+        st.subheader(selected_name)
+        st.caption(f"{team} · {season_a} · {player_type}")
+        st.caption(_format_batter_headline_line(player_row))
 
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
@@ -1558,39 +1663,9 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
 else:
     st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
     if player_type == "Pitcher":
-        ordered_selected_stats = [stat for stat in PITCHER_STAT_ORDER if stat in selected_stats]
-        primary_core_stats = [stat for stat in PITCHER_CORE_PRIMARY_ORDER if stat in ordered_selected_stats]
-        secondary_stats = [stat for stat in ordered_selected_stats if stat not in primary_core_stats]
-
-        if primary_core_stats:
-            st.markdown("**Core Pitching Stats**")
-            stat_cards_row(
-                player_stats,
-                percentiles,
-                color_tiers,
-                stats_order=primary_core_stats,
-                cols_per_row=3,
-                label_overrides=_PITCHER_STAT_LABELS,
-            )
-            st.caption(
-                "Priority: run prevention/outcomes -> dominance/control -> contact quality."
-            )
-
-        if secondary_stats:
-            with st.expander("More Pitching Metrics", expanded=False):
-                stat_cards_row(
-                    player_stats,
-                    percentiles,
-                    color_tiers,
-                    stats_order=secondary_stats,
-                    cols_per_row=3,
-                    label_overrides=_PITCHER_STAT_LABELS,
-                )
-
-        if not (primary_core_stats or secondary_stats):
-            st.info("No stats selected.")
+        _render_pitcher_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
     else:
-        stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
+        _render_batter_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
 
 st.divider()
 
