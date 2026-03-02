@@ -1054,20 +1054,8 @@ with st.sidebar:
         st.session_state["season_b"] = season_a
         season_b = season_a
 
-    if player_type == "Batter":
-        with st.expander("Options", expanded=False):
-            show_trad = st.toggle(
-                "Show traditional slash stats (AVG/OBP/SLG/OPS)",
-                value=False,
-                key="show_traditional_batting_stats",
-            )
-            _ = show_trad
-
     # ── Stats to show ─────────────────────────────────────────────────────────
-    show_traditional_batting_stats = bool(st.session_state.get("show_traditional_batting_stats", False))
     batter_stats_catalog = BATTER_STAT_ORDER.copy()
-    if show_traditional_batting_stats:
-        batter_stats_catalog = batter_stats_catalog + TRADITIONAL_STATS
 
     pitcher_stats_catalog = _build_pitcher_stats_catalog(season_df)
     pitcher_default_stats = [stat for stat in PITCHER_DEFAULT_STATS if stat in pitcher_stats_catalog]
@@ -1080,26 +1068,6 @@ with st.sidebar:
             if player_type == "Pitcher"
             else _DEFAULT_STATS.copy()
         )
-
-    if player_type == "Batter":
-        prev_toggle_key = "show_traditional_batting_stats_prev"
-        if prev_toggle_key not in st.session_state:
-            st.session_state[prev_toggle_key] = show_traditional_batting_stats
-        prev_show_traditional = bool(st.session_state.get(prev_toggle_key, show_traditional_batting_stats))
-        selected_stats_state = list(st.session_state.get(stats_selection_key, _DEFAULT_STATS.copy()))
-
-        if show_traditional_batting_stats and not prev_show_traditional:
-            selected_stats_state = list(dict.fromkeys(selected_stats_state + TRADITIONAL_STATS))
-            st.session_state[stats_selection_key] = selected_stats_state
-            for stat in TRADITIONAL_STATS:
-                st.session_state[f"stat_show_{stat}"] = True
-        elif (not show_traditional_batting_stats) and prev_show_traditional:
-            selected_stats_state = [stat for stat in selected_stats_state if stat not in TRADITIONAL_STATS]
-            st.session_state[stats_selection_key] = selected_stats_state
-            for stat in TRADITIONAL_STATS:
-                st.session_state[f"stat_show_{stat}"] = False
-
-        st.session_state[prev_toggle_key] = show_traditional_batting_stats
 
     _selected_count = sum(
         1 for stat in stats_catalog if st.session_state.get(f"stat_show_{stat}", True)
@@ -1477,10 +1445,6 @@ if comparison_mode and statcast_df_b is not None:
     validation_frames.append((selected_name_b, statcast_df_b))
 
 for stat in selected_stats_requested:
-    if stat in TRADITIONAL_STATS and player_type == "Batter":
-        selected_stats.append(stat)
-        continue
-
     if stat == "wRC+" and player_type == "Batter":
         selected_stats.append(stat)
         continue
@@ -1528,6 +1492,11 @@ if player_type == "Batter":
 elif player_type == "Pitcher":
     _raw = _merge_pitcher_season_stats(_raw, pitcher_season_stats)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
+traditional_stats = (
+    {stat: _raw.get(stat) for stat in TRADITIONAL_STATS}
+    if player_type == "Batter"
+    else {}
+)
 
 distributions = (
     build_pitcher_league_distributions(season_df)
@@ -1546,10 +1515,23 @@ if player_type == "Batter":
                 distributions[stat] = stat_values
 percentiles   = get_all_percentiles(player_stats, distributions, player_type=player_type)
 color_tiers   = get_all_color_tiers(percentiles)
+traditional_percentiles = (
+    get_all_percentiles(traditional_stats, distributions, player_type=player_type)
+    if player_type == "Batter"
+    else None
+)
+traditional_color_tiers = (
+    get_all_color_tiers(traditional_percentiles)
+    if traditional_percentiles is not None
+    else None
+)
 
 player_stats_b = None
 percentiles_b = None
 color_tiers_b = None
+traditional_stats_b = None
+traditional_percentiles_b = None
+traditional_color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
     if player_type == "Batter" and player_row_b is not None:
@@ -1559,6 +1541,8 @@ if comparison_mode and filtered_df_b is not None:
     elif player_type == "Pitcher":
         _raw_b = _merge_pitcher_season_stats(_raw_b, pitcher_season_stats_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
+    if player_type == "Batter":
+        traditional_stats_b = {stat: _raw_b.get(stat) for stat in TRADITIONAL_STATS}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
         build_pitcher_league_distributions(season_df_b_fg)
@@ -1581,6 +1565,11 @@ if comparison_mode and filtered_df_b is not None:
                     distributions_b[stat] = stat_values_b
     percentiles_b = get_all_percentiles(player_stats_b, distributions_b, player_type=player_type)
     color_tiers_b = get_all_color_tiers(percentiles_b)
+    if player_type == "Batter" and traditional_stats_b is not None:
+        traditional_percentiles_b = get_all_percentiles(
+            traditional_stats_b, distributions_b, player_type=player_type
+        )
+        traditional_color_tiers_b = get_all_color_tiers(traditional_percentiles_b)
 
 
 # ---------------------------------------------------------------------------
@@ -1683,6 +1672,46 @@ else:
         _render_pitcher_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
     else:
         _render_batter_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
+
+if (
+    player_type == "Batter"
+    and traditional_percentiles is not None
+    and traditional_color_tiers is not None
+):
+    st.markdown("**Traditional Stats**")
+    if (
+        comparison_mode
+        and traditional_stats_b is not None
+        and traditional_percentiles_b is not None
+        and traditional_color_tiers_b is not None
+    ):
+        trad_col_a, trad_col_b = st.columns(2)
+        with trad_col_a:
+            st.markdown(f"**{selected_name}**")
+            stat_cards_row(
+                traditional_stats,
+                traditional_percentiles,
+                traditional_color_tiers,
+                stats_order=TRADITIONAL_STATS,
+                cols_per_row=2,
+            )
+        with trad_col_b:
+            st.markdown(f"**{selected_name_b}**")
+            stat_cards_row(
+                traditional_stats_b,
+                traditional_percentiles_b,
+                traditional_color_tiers_b,
+                stats_order=TRADITIONAL_STATS,
+                cols_per_row=2,
+            )
+    else:
+        stat_cards_row(
+            traditional_stats,
+            traditional_percentiles,
+            traditional_color_tiers,
+            stats_order=TRADITIONAL_STATS,
+            cols_per_row=2,
+        )
 
 st.divider()
 
