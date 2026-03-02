@@ -507,6 +507,24 @@ def _format_batter_headline_line(player_row: "pd.Series | None") -> str:
     return f"{wrc_part}  •  {slash_part}  •  {woba_part}"
 
 
+def _render_headline_md(text: str) -> None:
+    """Render a headline stat line in large bold text."""
+    st.markdown(
+        f'<p style="font-size:22px;font-weight:700;color:#f0f0f0;'
+        f'line-height:1.2;margin:0 0 8px">{text}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_subheading_md(team: str, season: int) -> None:
+    """Render team · season in slightly-larger subdued text, no player type."""
+    st.markdown(
+        f'<p style="font-size:15px;color:rgba(255,255,255,0.55);'
+        f'margin:-4px 0 6px">{team} · {season}</p>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_pitcher_stats_tiered(
     player_stats: dict[str, float | None],
     percentiles: dict[str, float],
@@ -541,15 +559,15 @@ def _render_pitcher_stats_tiered(
         )
 
     if tier3:
-        with st.expander("Contact Quality & Stuff", expanded=False):
-            stat_cards_row(
-                player_stats, percentiles, color_tiers,
-                stats_order=tier3, cols_per_row=3,
-                label_overrides=_PITCHER_STAT_LABELS,
-            )
-            season_only = [s for s in tier3 if s in PITCHER_SEASON_ONLY_STATS]
-            if season_only:
-                st.caption(f"Season-level: {', '.join(season_only)}.")
+        st.markdown("**Contact Quality & Stuff**")
+        stat_cards_row(
+            player_stats, percentiles, color_tiers,
+            stats_order=tier3, cols_per_row=3,
+            label_overrides=_PITCHER_STAT_LABELS,
+        )
+        season_only = [s for s in tier3 if s in PITCHER_SEASON_ONLY_STATS]
+        if season_only:
+            st.caption(f"Season-level: {', '.join(season_only)}.")
 
     if not (tier2_outcome or tier2_dominance or tier3):
         st.info("No stats selected.")
@@ -573,12 +591,11 @@ def _render_batter_stats_tiered(
                        stats_order=tier2, cols_per_row=3)
 
     if tier3:
-        with st.expander("More Batting Metrics", expanded=False):
-            stat_cards_row(player_stats, percentiles, color_tiers,
-                           stats_order=tier3, cols_per_row=3)
-            season_only = [s for s in tier3 if s in _batter_season_only]
-            if season_only:
-                st.caption(f"Season-level (not filter-affected): {', '.join(season_only)}.")
+        stat_cards_row(player_stats, percentiles, color_tiers,
+                       stats_order=tier3, cols_per_row=3)
+        season_only = [s for s in tier3 if s in _batter_season_only]
+        if season_only:
+            st.caption(f"Season-level (not filter-affected): {', '.join(season_only)}.")
 
     if not (tier2 or tier3):
         st.info("No stats selected.")
@@ -1573,39 +1590,39 @@ if comparison_mode and filtered_df_b is not None:
 if comparison_mode and team_b is not None:
     if season_a != season_b:
         st.subheader(f"{selected_name} ({season_a}) vs {selected_name_b} ({season_b})")
-        st.caption(f"{team} vs {team_b} · {player_type}")
+        st.caption(f"{team} vs {team_b}")
     else:
         st.subheader(f"{selected_name} vs {selected_name_b}")
-        st.caption(f"{team} vs {team_b} · {season_a} · {player_type}")
+        st.caption(f"{team} vs {team_b} · {season_a}")
     if player_type == "Pitcher":
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
-            st.caption(f"{team} · {season_a} · Pitcher")
-            st.caption(_format_pitcher_headline_line(pitcher_season_stats))
+            _render_subheading_md(team, season_a)
+            _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
-            st.caption(f"{team_b} · {season_b} · Pitcher")
-            st.caption(_format_pitcher_headline_line(pitcher_season_stats_b))
+            _render_subheading_md(team_b, season_b)
+            _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats_b))
     else:
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
-            st.caption(f"{team} · {season_a} · Batter")
-            st.caption(_format_batter_headline_line(player_row))
+            _render_subheading_md(team, season_a)
+            _render_headline_md(_format_batter_headline_line(player_row))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
-            st.caption(f"{team_b} · {season_b} · Batter")
-            st.caption(_format_batter_headline_line(player_row_b))
+            _render_subheading_md(team_b, season_b)
+            _render_headline_md(_format_batter_headline_line(player_row_b))
 else:
     if player_type == "Pitcher":
         st.subheader(selected_name)
-        st.caption(f"{team} · {season_a} · {player_type}")
-        st.caption(_format_pitcher_headline_line(pitcher_season_stats))
+        _render_subheading_md(team, season_a)
+        _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
     else:
         st.subheader(selected_name)
-        st.caption(f"{team} · {season_a} · {player_type}")
-        st.caption(_format_batter_headline_line(player_row))
+        _render_subheading_md(team, season_a)
+        _render_headline_md(_format_batter_headline_line(player_row))
 
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
