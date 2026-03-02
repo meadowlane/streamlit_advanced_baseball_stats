@@ -1005,9 +1005,6 @@ with st.sidebar:
 
     # ── Player A ──────────────────────────────────────────────────────────────
     # Preserve the selected player across season changes.
-    # If they didn't qualify this season (< 50 PA), inject their name so the
-    # widget keeps showing it; a warning is surfaced below and in the main area.
-    #
     # Clear logic: the button sets a pending flag; we honour it here, *before*
     # the widget is instantiated, which is the only point Streamlit allows
     # writing to a widget's own session-state key.
@@ -1015,10 +1012,9 @@ with st.sidebar:
     if st.session_state.pop(clear_player_pending_key, False):
         st.session_state[player_a_key] = None
 
+    if st.session_state.get(player_a_key) not in player_names:
+        st.session_state[player_a_key] = None
     _prev_player = st.session_state.get(player_a_key)
-    _player_not_in_season = _prev_player is not None and _prev_player not in player_names
-    if _player_not_in_season:
-        player_names = [_prev_player] + player_names
 
     selected_name = st.selectbox(
         "Player",
@@ -1027,9 +1023,6 @@ with st.sidebar:
         placeholder="Type to search…",
         key=player_a_key,
     )
-
-    if _player_not_in_season and selected_name == _prev_player:
-        st.warning(f"No MLB Statcast data for {selected_name} in {season_a}.")
 
     if selected_name is not None:
         if st.button("Clear player", width="stretch"):
@@ -1080,12 +1073,9 @@ with st.sidebar:
         else:
             player_b_names = [n for n in player_names if n != selected_name]
 
+        if st.session_state.get(player_b_key) not in player_b_names:
+            st.session_state[player_b_key] = None
         _prev_player_b = st.session_state.get(player_b_key)
-        _player_b_not_in_season = (
-            _prev_player_b is not None and _prev_player_b not in player_b_names
-        )
-        if _player_b_not_in_season:
-            player_b_names = [_prev_player_b] + player_b_names
 
         selected_name_b = st.selectbox(
             "Player B",
@@ -1094,9 +1084,6 @@ with st.sidebar:
             placeholder="Type to search…",
             key=player_b_key,
         )
-
-        if _player_b_not_in_season and selected_name_b == _prev_player_b:
-            st.warning(f"No MLB Statcast data for {selected_name_b} in {season_b}.")
 
         if selected_name_b is not None:
             if st.button("Clear player B", width="stretch"):
