@@ -121,7 +121,9 @@ def statcast_df_factory() -> Callable[..., pd.DataFrame]:
                 launch_speed_angle.append(6.0 if speed >= 98.0 else 4.0)
                 bb_type.append("ground_ball" if i % 2 == 0 else "fly_ball")
                 xwoba.append(
-                    0.500 if event in {"single", "double", "triple", "home_run"} else 0.050
+                    0.500
+                    if event in {"single", "double", "triple", "home_run"}
+                    else 0.050
                 )
                 descriptions.append("hit_into_play")
             else:
@@ -162,8 +164,12 @@ def statcast_df_factory() -> Callable[..., pd.DataFrame]:
         if include_pitch_cols:
             pitch_types = ["FF", "SL", "CH", "CU"]
             df["pitch_type"] = [pitch_types[i % len(pitch_types)] for i in range(n)]
-            df["release_speed"] = [95.0 if pt == "FF" else 84.0 for pt in df["pitch_type"]]
-            df["release_spin_rate"] = [2400.0 if pt == "FF" else 2600.0 for pt in df["pitch_type"]]
+            df["release_speed"] = [
+                95.0 if pt == "FF" else 84.0 for pt in df["pitch_type"]
+            ]
+            df["release_spin_rate"] = [
+                2400.0 if pt == "FF" else 2600.0 for pt in df["pitch_type"]
+            ]
             df["plate_x"] = np.linspace(-0.8, 0.8, n)
             df["plate_z"] = np.linspace(1.8, 3.4, n)
             df["sz_top"] = [3.4] * n

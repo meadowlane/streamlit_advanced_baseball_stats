@@ -33,7 +33,9 @@ def _pa_for_split(splits_df: pd.DataFrame, split_label: str) -> int:
     return int(row.iloc[0])
 
 
-def test_month_filter_changes_monthly_split_rows(varied_prepared_statcast_df: pd.DataFrame):
+def test_month_filter_changes_monthly_split_rows(
+    varied_prepared_statcast_df: pd.DataFrame,
+):
     all_months = get_splits(varied_prepared_statcast_df, "monthly")
     june_filtered = apply_filters(varied_prepared_statcast_df, SplitFilters(month=6))
     june_only = get_splits(june_filtered, "monthly")
@@ -65,7 +67,9 @@ def test_inning_and_handedness_filters_change_hand_split_pas(
     assert _pa_for_split(left_splits, "vs LHP") > 0
 
 
-def test_batter_hand_filter_changes_pitch_arsenal(varied_prepared_statcast_df: pd.DataFrame):
+def test_batter_hand_filter_changes_pitch_arsenal(
+    varied_prepared_statcast_df: pd.DataFrame,
+):
     month_april = SplitFilters(month=4)
     left_april = apply_filters(
         apply_filters(varied_prepared_statcast_df, month_april),

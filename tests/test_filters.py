@@ -19,13 +19,23 @@ from stats.filters import (
 # Fixtures / helpers
 # ===========================================================================
 
+
 def _make_df() -> pd.DataFrame:
     """Tiny synthetic pitch-level DataFrame with an 'inning' column."""
     return pd.DataFrame(
         {
             "inning": [1, 2, 3, 4, 5, 6, 7, 8, 9],
-            "events": ["single", "out", "homer", "out", "double",
-                       "out", "triple", "out", "walk"],
+            "events": [
+                "single",
+                "out",
+                "homer",
+                "out",
+                "double",
+                "out",
+                "triple",
+                "out",
+                "walk",
+            ],
         }
     )
 
@@ -44,17 +54,20 @@ def _make_full_df() -> pd.DataFrame:
     """
     return pd.DataFrame(
         {
-            "inning":        [1, 2, 3, 4, 5, 6],
-            "p_throws":      ["R", "R", "L", "L", "R", "L"],
+            "inning": [1, 2, 3, 4, 5, 6],
+            "p_throws": ["R", "R", "L", "L", "R", "L"],
             "inning_topbot": ["Top", "Bot", "Top", "Bot", "Bot", "Top"],
-            "game_date":     [
-                "2024-04-10", "2024-04-15",
-                "2024-05-01", "2024-05-20",
-                "2024-06-05", "2024-07-10",
+            "game_date": [
+                "2024-04-10",
+                "2024-04-15",
+                "2024-05-01",
+                "2024-05-20",
+                "2024-06-05",
+                "2024-07-10",
             ],
-            "balls":   [0, 1, 2, 3, 0, 1],
+            "balls": [0, 1, 2, 3, 0, 1],
             "strikes": [0, 1, 2, 0, 1, 2],
-            "events":  ["out", "single", "homer", "walk", "out", "double"],
+            "events": ["out", "single", "homer", "walk", "out", "double"],
         }
     )
 
@@ -67,6 +80,7 @@ def _row(filter_type: str, params: dict, row_id: str = "r1") -> dict:
 # ===========================================================================
 # TestFilterSpec
 # ===========================================================================
+
 
 class TestFilterSpec:
     def test_is_dataclass(self):
@@ -86,10 +100,16 @@ class TestFilterSpec:
 # TestFilterRegistry
 # ===========================================================================
 
+
 class TestFilterRegistry:
     def test_all_six_keys_present(self):
         assert set(FILTER_REGISTRY.keys()) == {
-            "inning", "pitcher_hand", "batter_hand", "home_away", "month", "count"
+            "inning",
+            "pitcher_hand",
+            "batter_hand",
+            "home_away",
+            "month",
+            "count",
         }
 
     def test_inning_spec(self):
@@ -134,6 +154,7 @@ class TestFilterRegistry:
 # ===========================================================================
 # TestSplitFilters
 # ===========================================================================
+
 
 class TestSplitFilters:
     def test_default_construction(self):
@@ -185,6 +206,7 @@ class TestSplitFilters:
 # ===========================================================================
 # TestRowsToSplitFilters
 # ===========================================================================
+
 
 class TestRowsToSplitFilters:
     def test_empty_list_gives_default_split_filters(self):
@@ -279,7 +301,7 @@ class TestRowsToSplitFilters:
     def test_row_missing_filter_type_is_skipped(self):
         """Rows with no 'filter_type' key are silently skipped."""
         rows = [
-            {"id": "r1", "params": {"hand": "R"}},          # no filter_type
+            {"id": "r1", "params": {"hand": "R"}},  # no filter_type
             _row("pitcher_hand", {"hand": "L"}, row_id="r2"),
         ]
         result = rows_to_split_filters(rows)
@@ -338,6 +360,7 @@ class TestRowsToSplitFilters:
 # TestPrepareDf
 # ===========================================================================
 
+
 class TestPrepareDf:
     def test_derives_month_and_coerces_game_date_and_inning(self):
         df = pd.DataFrame(
@@ -386,6 +409,7 @@ class TestPrepareDf:
 # TestSummarizeFilterRows
 # ===========================================================================
 
+
 class TestSummarizeFilterRows:
     def test_empty_rows_shows_full_season_message(self):
         assert summarize_filter_rows([]) == "No filters (full season data)"
@@ -397,9 +421,7 @@ class TestSummarizeFilterRows:
             _row("count", {"balls": 1, "strikes": 2}, row_id="r3"),
         ]
         summary = summarize_filter_rows(rows)
-        assert summary == (
-            "Inning range: 5-9, Pitcher handedness: L, Count: 1-2"
-        )
+        assert summary == ("Inning range: 5-9, Pitcher handedness: L, Count: 1-2")
 
     def test_summary_includes_batter_hand(self):
         rows = [_row("batter_hand", {"hand": "R"}, row_id="r1")]
@@ -409,6 +431,7 @@ class TestSummarizeFilterRows:
 # ===========================================================================
 # TestApplyFilters — inning (existing behaviour preserved)
 # ===========================================================================
+
 
 class TestApplyFilters:
     def test_no_op_when_no_filters(self):
@@ -449,6 +472,7 @@ class TestApplyFilters:
 # TestApplyFiltersPitcherHand
 # ===========================================================================
 
+
 class TestApplyFiltersPitcherHand:
     def test_right_handed_only(self):
         # rows 0, 1, 4 have p_throws=="R" → innings 1, 2, 5
@@ -464,6 +488,7 @@ class TestApplyFiltersPitcherHand:
         df = pd.DataFrame({"inning": [1, 2]})
         with pytest.raises(ValueError, match="p_throws"):
             apply_filters(df, SplitFilters(pitcher_hand="R"))
+
 
 class TestApplyFiltersBatterHand:
     def test_batter_hand_filter_right(self):
@@ -482,6 +507,7 @@ class TestApplyFiltersBatterHand:
 # ===========================================================================
 # TestApplyFiltersHomeAway
 # ===========================================================================
+
 
 class TestApplyFiltersHomeAway:
     def test_home_keeps_bot_half(self):
@@ -524,6 +550,7 @@ class TestApplyFiltersHomeAway:
 # TestApplyFiltersMonth
 # ===========================================================================
 
+
 class TestApplyFiltersMonth:
     def test_april(self):
         # game_date months: Apr, Apr, May, May, Jun, Jul
@@ -559,6 +586,7 @@ class TestApplyFiltersMonth:
 # TestApplyFiltersBalls
 # ===========================================================================
 
+
 class TestApplyFiltersBalls:
     def test_zero_balls(self):
         # balls==0 → rows 0, 4 → innings 1, 5
@@ -580,6 +608,7 @@ class TestApplyFiltersBalls:
 # TestApplyFiltersStrikes
 # ===========================================================================
 
+
 class TestApplyFiltersStrikes:
     def test_two_strikes(self):
         # strikes==2 → rows 2, 5 → innings 3, 6
@@ -600,6 +629,7 @@ class TestApplyFiltersStrikes:
 # ===========================================================================
 # TestApplyFiltersAndCombination
 # ===========================================================================
+
 
 class TestApplyFiltersAndCombination:
     def test_pitcher_hand_and_home_away(self):

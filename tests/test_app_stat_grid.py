@@ -35,9 +35,9 @@ def _load_stat_grid_functions():
         }:
             selected.append(node)
 
-    assert (
-        len(selected) == 2
-    ), "Expected to find both _chunk_stats and _render_player_stat_grid in app.py"
+    assert len(selected) == 2, (
+        "Expected to find both _chunk_stats and _render_player_stat_grid in app.py"
+    )
 
     module = ast.Module(body=selected, type_ignores=[])
     ast.fix_missing_locations(module)

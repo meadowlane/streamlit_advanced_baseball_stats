@@ -53,17 +53,18 @@ PITCHER_MIN_DISTRIBUTION_SAMPLE: int = 10
 # Color tiers (mirrors Baseball Savant convention).
 # List of (min_percentile_inclusive, name, hex).  Evaluated top-down.
 COLOR_TIERS: list[tuple[float, str, str]] = [
-    (90.0, "red",    "#C0392B"),
+    (90.0, "red", "#C0392B"),
     (70.0, "orange", "#E67E22"),
     (50.0, "yellow", "#F1C40F"),
-    (30.0, "blue",   "#2980B9"),
-    (0.0,  "gray",   "#95A5A6"),
+    (30.0, "blue", "#2980B9"),
+    (0.0, "gray", "#95A5A6"),
 ]
 
 
 # ---------------------------------------------------------------------------
 # Distribution building
 # ---------------------------------------------------------------------------
+
 
 def build_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]:
     """Return per-stat arrays of all qualified batters' values for a season.
@@ -82,7 +83,9 @@ def build_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]
     return distributions
 
 
-def build_pitcher_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]:
+def build_pitcher_league_distributions(
+    season_df: pd.DataFrame,
+) -> dict[str, np.ndarray]:
     """Return per-stat arrays of qualified pitchers for percentile distributions."""
     distributions: dict[str, np.ndarray] = {}
     inverse_fg_map = {internal: fg for fg, internal in FG_PITCHER_COLUMN_MAP.items()}
@@ -107,6 +110,7 @@ def build_pitcher_league_distributions(season_df: pd.DataFrame) -> dict[str, np.
 # ---------------------------------------------------------------------------
 # Percentile computation
 # ---------------------------------------------------------------------------
+
 
 def compute_percentile(
     value: float,
@@ -133,7 +137,9 @@ def compute_percentile(
     return round(float(pct), 1)
 
 
-def get_percentile(stat: str, value: float, distributions: dict[str, np.ndarray]) -> float:
+def get_percentile(
+    stat: str, value: float, distributions: dict[str, np.ndarray]
+) -> float:
     """Convenience wrapper: look up direction from LOWER_IS_BETTER and compute."""
     if stat not in distributions:
         return np.nan
@@ -171,6 +177,7 @@ def get_all_percentiles(
 # ---------------------------------------------------------------------------
 # Color tier
 # ---------------------------------------------------------------------------
+
 
 def get_color_tier(percentile: float) -> dict[str, str]:
     """Map a percentile (0–100) to a color name and hex string.

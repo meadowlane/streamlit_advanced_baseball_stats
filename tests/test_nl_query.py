@@ -58,7 +58,9 @@ def test_ambiguous_comparison_keeps_mode_enabled():
     assert parsed["comparison_mode"] is True
     assert parsed["player_a"] in {"Mike Trout", "Mike Tauchman"}
     assert parsed["player_b"] == "Dylan Beavers"
-    assert any("matched multiple players" in warning.lower() for warning in parsed["warnings"])
+    assert any(
+        "matched multiple players" in warning.lower() for warning in parsed["warnings"]
+    )
 
 
 def test_parses_season_year():
@@ -225,4 +227,7 @@ def test_comparison_kept_when_b_unresolved():
     assert parsed["comparison_mode"] is True
     assert parsed["player_a"] == "Pete Alonso"
     assert parsed["player_b"] is None
-    assert any("could not resolve player b" in warning.lower() for warning in parsed["warnings"])
+    assert any(
+        "could not resolve player b" in warning.lower()
+        for warning in parsed["warnings"]
+    )

@@ -19,7 +19,6 @@ from stats.splits import (
     split_by_hand,
     split_home_away_pitcher,
     split_home_away,
-    split_by_month_pitcher,
     split_by_month,
     get_pitcher_splits,
     get_splits,
@@ -37,6 +36,7 @@ from stats.filters import SplitFilters, prepare_df
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_df(
     n: int = 30,
     p_throws: str | list = "R",
@@ -50,19 +50,45 @@ def _make_df(
     Spread of events: 6 SO, 3 BB, 1 HR, 1 3B, 2 2B, 5 1B, rest field_out.
     """
     events_cycle = [
-        "strikeout", "strikeout", "walk", "home_run", "single",
-        "field_out", "double", "strikeout", "walk", "single",
-        "field_out", "field_out", "triple", "strikeout", "single",
-        "double", "walk", "field_out", "strikeout", "single",
-        "field_out", "field_out", "strikeout", "single", "field_out",
-        "field_out", "field_out", "field_out", "field_out", "field_out",
+        "strikeout",
+        "strikeout",
+        "walk",
+        "home_run",
+        "single",
+        "field_out",
+        "double",
+        "strikeout",
+        "walk",
+        "single",
+        "field_out",
+        "field_out",
+        "triple",
+        "strikeout",
+        "single",
+        "double",
+        "walk",
+        "field_out",
+        "strikeout",
+        "single",
+        "field_out",
+        "field_out",
+        "strikeout",
+        "single",
+        "field_out",
+        "field_out",
+        "field_out",
+        "field_out",
+        "field_out",
+        "field_out",
     ]
     # Pad or trim to exactly n
     events = (events_cycle * ((n // len(events_cycle)) + 1))[:n]
 
     # Pitch rows: only the last pitch of each PA has events set; rest are None
     # For simplicity every row IS a PA outcome (all rows have events set)
-    dates = pd.date_range(f"2024-0{month if isinstance(month, int) else 4}-01", periods=n).strftime("%Y-%m-%d")
+    dates = pd.date_range(
+        f"2024-0{month if isinstance(month, int) else 4}-01", periods=n
+    ).strftime("%Y-%m-%d")
 
     def _expand(val, n):
         if isinstance(val, list):
@@ -74,15 +100,14 @@ def _make_df(
         for e in events
     ]
     launch_speed_angles = [
-        BARREL_CODE if s and s >= 98 else (4.0 if s else np.nan)
-        for s in launch_speeds
+        BARREL_CODE if s and s >= 98 else (4.0 if s else np.nan) for s in launch_speeds
     ]
 
     return pd.DataFrame(
         {
-            "game_date": _expand(dates.tolist(), n) if isinstance(month, int) else [
-                f"2024-0{m}-01" for m in _expand(month, n)
-            ],
+            "game_date": _expand(dates.tolist(), n)
+            if isinstance(month, int)
+            else [f"2024-0{m}-01" for m in _expand(month, n)],
             "p_throws": _expand(p_throws, n),
             "stand": _expand(stand, n),
             "inning_topbot": _expand(inning_topbot, n),
@@ -93,12 +118,15 @@ def _make_df(
             "launch_speed": launch_speeds,
             "launch_speed_angle": [float(x) for x in launch_speed_angles],
             "bb_type": [
-                "ground_ball" if e in {"single", "double", "triple", "home_run", "field_out"} else np.nan
+                "ground_ball"
+                if e in {"single", "double", "triple", "home_run", "field_out"}
+                else np.nan
                 for e in events
             ],
             "estimated_woba_using_speedangle": [
-                0.500 if e in {"single", "double", "triple", "home_run"} else
-                (0.050 if e == "field_out" else np.nan)
+                0.500
+                if e in {"single", "double", "triple", "home_run"}
+                else (0.050 if e == "field_out" else np.nan)
                 for e in events
             ],
         }
@@ -109,9 +137,17 @@ def _empty_df() -> pd.DataFrame:
     """A DataFrame with the right schema but zero rows."""
     return pd.DataFrame(
         columns=[
-            "game_date", "p_throws", "stand", "inning_topbot", "events",
-            "description", "balls", "strikes", "bb_type",
-            "launch_speed", "launch_speed_angle",
+            "game_date",
+            "p_throws",
+            "stand",
+            "inning_topbot",
+            "events",
+            "description",
+            "balls",
+            "strikes",
+            "bb_type",
+            "launch_speed",
+            "launch_speed_angle",
             "estimated_woba_using_speedangle",
         ]
     )
@@ -120,6 +156,7 @@ def _empty_df() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # _pa_events
 # ---------------------------------------------------------------------------
+
 
 class TestPaEvents:
     def test_returns_only_pa_rows(self):
@@ -144,10 +181,20 @@ class TestPaEvents:
 # _compute_stats
 # ---------------------------------------------------------------------------
 
+
 class TestComputeStats:
     def test_returns_all_keys(self):
         stats = _compute_stats(_make_df())
-        expected_keys = {"PA", "K%", "BB%", "HardHit%", "Barrel%", "GB%", "xwOBA", "wOBA"}
+        expected_keys = {
+            "PA",
+            "K%",
+            "BB%",
+            "HardHit%",
+            "Barrel%",
+            "GB%",
+            "xwOBA",
+            "wOBA",
+        }
         assert expected_keys == set(stats.keys())
 
     def test_pa_count_correct(self):
@@ -280,6 +327,7 @@ class TestPitcherDerivedStats:
 # _compute_woba
 # ---------------------------------------------------------------------------
 
+
 class TestComputeWoba:
     def test_all_singles(self):
         df = pd.DataFrame({"events": ["single"] * 10})
@@ -310,10 +358,17 @@ class TestComputeWoba:
 # StatSpec / registry
 # ---------------------------------------------------------------------------
 
+
 class TestStatRegistry:
     def test_registry_has_current_seven_stats(self):
         assert set(STAT_REGISTRY.keys()) == {
-            "wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%", "GB%"
+            "wOBA",
+            "xwOBA",
+            "K%",
+            "BB%",
+            "HardHit%",
+            "Barrel%",
+            "GB%",
         }
         assert all(isinstance(spec, StatSpec) for spec in STAT_REGISTRY.values())
 
@@ -339,6 +394,7 @@ class TestStatRegistry:
 # ---------------------------------------------------------------------------
 # get_sample_sizes
 # ---------------------------------------------------------------------------
+
 
 class TestGetSampleSizes:
     def test_returns_pitch_pa_and_bip_counts(self):
@@ -373,6 +429,7 @@ class TestGetSampleSizes:
 # split_by_hand
 # ---------------------------------------------------------------------------
 
+
 class TestSplitByHand:
     def test_returns_two_rows(self):
         df = _make_df(30, p_throws=["R", "L"])
@@ -404,6 +461,7 @@ class TestSplitByHand:
 # split_home_away
 # ---------------------------------------------------------------------------
 
+
 class TestSplitHomeAway:
     def test_returns_two_rows(self):
         df = _make_df(30, inning_topbot=["Bot", "Top"])
@@ -426,6 +484,7 @@ class TestSplitHomeAway:
 # ---------------------------------------------------------------------------
 # split_by_month
 # ---------------------------------------------------------------------------
+
 
 class TestSplitByMonth:
     def test_one_row_per_month(self):
@@ -453,6 +512,7 @@ class TestSplitByMonth:
 # ---------------------------------------------------------------------------
 # get_splits dispatcher
 # ---------------------------------------------------------------------------
+
 
 class TestGetSplits:
     def test_dispatches_hand(self):
@@ -515,6 +575,7 @@ class TestPitcherSplits:
 # get_trend_stats
 # ---------------------------------------------------------------------------
 
+
 class TestGetTrendStats:
     """Tests for get_trend_stats — uses injected fetch_fn stubs."""
 
@@ -522,25 +583,33 @@ class TestGetTrendStats:
 
     def _stub(self, df: "pd.DataFrame"):
         """Return a fetch_fn that always returns the given DataFrame."""
+
         def fetch_fn(mlbam_id: int, season: int) -> pd.DataFrame:
             return df.copy()
+
         return fetch_fn
 
     def test_returns_one_dict_per_season(self):
         stub = self._stub(_make_df(30))
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2022, 2023, 2024],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[2022, 2023, 2024],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache={},
         )
         assert len(result) == 3
 
     def test_season_key_present_in_each_row(self):
         stub = self._stub(_make_df(30))
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2022, 2023],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[2022, 2023],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache={},
         )
         assert result[0]["season"] == 2022
         assert result[1]["season"] == 2023
@@ -548,9 +617,12 @@ class TestGetTrendStats:
     def test_all_stat_keys_present_in_each_row(self):
         stub = self._stub(_make_df(30))
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2024, 2025],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[2024, 2025],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache={},
         )
         for row in result:
             assert self._STAT_KEYS.issubset(row.keys()), (
@@ -560,9 +632,12 @@ class TestGetTrendStats:
     def test_pitcher_trend_rows_include_pitcher_only_keys(self):
         stub = self._stub(_make_df(30))
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2024],
-            player_type="Pitcher", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[2024],
+            player_type="Pitcher",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache={},
         )
         row = result[0]
         for key in ["CSW%", "Whiff%", "FirstStrike%", "K-BB%"]:
@@ -571,9 +646,12 @@ class TestGetTrendStats:
     def test_empty_df_produces_none_stats(self):
         stub = self._stub(_empty_df())
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2024],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[2024],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache={},
         )
         assert len(result) == 1
         row = result[0]
@@ -584,9 +662,12 @@ class TestGetTrendStats:
     def test_empty_seasons_list_returns_empty(self):
         stub = self._stub(_make_df(30))
         result = get_trend_stats(
-            mlbam_id=1, seasons=[],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache={},
         )
         assert result == []
 
@@ -596,9 +677,12 @@ class TestGetTrendStats:
         stub = self._stub(df)
         filters = SplitFilters(pitcher_hand="R")
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2024],
-            player_type="Batter", filters=filters,
-            fetch_fn=stub, prepare_cache={},
+            mlbam_id=1,
+            seasons=[2024],
+            player_type="Batter",
+            filters=filters,
+            fetch_fn=stub,
+            prepare_cache={},
         )
         assert result[0]["PA"] == 15
 
@@ -606,9 +690,12 @@ class TestGetTrendStats:
         stub = self._stub(_make_df(30))
         cache: dict = {}
         get_trend_stats(
-            mlbam_id=7, seasons=[2023, 2024],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=stub, prepare_cache=cache,
+            mlbam_id=7,
+            seasons=[2023, 2024],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=stub,
+            prepare_cache=cache,
         )
         assert (7, 2023, "Batter") in cache
         assert (7, 2024, "Batter") in cache
@@ -621,9 +708,12 @@ class TestGetTrendStats:
         # Stub returns a different df (10 PA); cache hit should win
         different_stub = self._stub(_make_df(10))
         result = get_trend_stats(
-            mlbam_id=1, seasons=[2024],
-            player_type="Batter", filters=SplitFilters(),
-            fetch_fn=different_stub, prepare_cache=cache,
+            mlbam_id=1,
+            seasons=[2024],
+            player_type="Batter",
+            filters=SplitFilters(),
+            fetch_fn=different_stub,
+            prepare_cache=cache,
         )
         # PA should be 30 (from cached df), not 10 (from stub)
         assert result[0]["PA"] == 30
@@ -632,6 +722,7 @@ class TestGetTrendStats:
 # ---------------------------------------------------------------------------
 # compute_pitch_arsenal
 # ---------------------------------------------------------------------------
+
 
 class TestComputePitchArsenal:
     def test_usage_changes_with_handedness_filtering(self):
@@ -645,8 +736,12 @@ class TestComputePitchArsenal:
                 "pitch_type": (["FF"] * (ff_l + ff_r)) + (["SL"] * (sl_r + sl_s)),
                 "description": ["called_strike"] * (ff_l + ff_r + sl_r + sl_s),
                 "release_speed": ([96.0] * (ff_l + ff_r)) + ([85.0] * (sl_r + sl_s)),
-                "release_spin_rate": ([2400.0] * (ff_l + ff_r)) + ([2500.0] * (sl_r + sl_s)),
-                "stand": (["L"] * ff_l) + (["R"] * ff_r) + (["R"] * sl_r) + (["S"] * sl_s),
+                "release_spin_rate": ([2400.0] * (ff_l + ff_r))
+                + ([2500.0] * (sl_r + sl_s)),
+                "stand": (["L"] * ff_l)
+                + (["R"] * ff_r)
+                + (["R"] * sl_r)
+                + (["S"] * sl_s),
             }
         )
 

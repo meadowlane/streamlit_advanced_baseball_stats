@@ -4,8 +4,6 @@ Streamlit rendering functions (stat_card, percentile_bar_chart, etc.)
 require a live runtime and are exercised via manual smoke test in Phase 7.
 """
 
-import math
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
@@ -50,18 +48,19 @@ _PERCENTILES = {
 }
 
 _COLOR_TIERS = {
-    "wOBA":     {"name": "orange", "hex": "#E67E22"},
-    "xwOBA":    {"name": "orange", "hex": "#E67E22"},
-    "K%":       {"name": "yellow", "hex": "#F1C40F"},
-    "BB%":      {"name": "orange", "hex": "#E67E22"},
+    "wOBA": {"name": "orange", "hex": "#E67E22"},
+    "xwOBA": {"name": "orange", "hex": "#E67E22"},
+    "K%": {"name": "yellow", "hex": "#F1C40F"},
+    "BB%": {"name": "orange", "hex": "#E67E22"},
     "HardHit%": {"name": "yellow", "hex": "#F1C40F"},
-    "Barrel%":  {"name": "yellow", "hex": "#F1C40F"},
+    "Barrel%": {"name": "yellow", "hex": "#F1C40F"},
 }
 
 
 # ---------------------------------------------------------------------------
 # format_stat_value
 # ---------------------------------------------------------------------------
+
 
 class TestFormatStatValue:
     def test_woba_three_decimals(self):
@@ -97,14 +96,18 @@ class TestFormatStatValue:
 # format_percentile
 # ---------------------------------------------------------------------------
 
+
 class TestFormatPercentile:
-    @pytest.mark.parametrize("pct,expected", [
-        (87.4, "87th"),
-        (90.0, "90th"),
-        (0.0,  "0th"),
-        (100.0, "100th"),
-        (50.6, "51th"),  # rounds to nearest int
-    ])
+    @pytest.mark.parametrize(
+        "pct,expected",
+        [
+            (87.4, "87th"),
+            (90.0, "90th"),
+            (0.0, "0th"),
+            (100.0, "100th"),
+            (50.6, "51th"),  # rounds to nearest int
+        ],
+    )
     def test_formats_correctly(self, pct, expected):
         assert format_percentile(pct) == expected
 
@@ -118,6 +121,7 @@ class TestFormatPercentile:
 # ---------------------------------------------------------------------------
 # build_chart_df
 # ---------------------------------------------------------------------------
+
 
 class TestBuildChartDf:
     def _df(self):
@@ -169,6 +173,7 @@ class TestBuildChartDf:
 # ---------------------------------------------------------------------------
 # _build_trend_tidy_df
 # ---------------------------------------------------------------------------
+
 
 def test_build_trend_tidy_df_includes_stat_key_schema():
     trend_data = [
@@ -256,7 +261,9 @@ def test_build_single_stat_chart_contains_low_sample_open_marker_trace():
         year_range=(2022, 2023),
         player_type="Batter",
     )
-    assert any(getattr(trace.marker, "symbol", None) == "circle-open" for trace in fig.data)
+    assert any(
+        getattr(trace.marker, "symbol", None) == "circle-open" for trace in fig.data
+    )
 
 
 def test_split_table_column_help_is_wired():

@@ -17,14 +17,28 @@ CORE_STATS: list[str] = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 _COMPARISON_HINT_RE = re.compile(r"\b(compare|vs|versus|against)\b", re.IGNORECASE)
-_COMPARE_AND_RE = re.compile(r"^\s*compare\s+(?P<a>.+?)\s+and\s+(?P<b>.+?)\s*$", re.IGNORECASE)
-_VS_RE = re.compile(r"^\s*(?P<a>.+?)\s+(?:vs|versus|against)\s+(?P<b>.+?)\s*$", re.IGNORECASE)
+_COMPARE_AND_RE = re.compile(
+    r"^\s*compare\s+(?P<a>.+?)\s+and\s+(?P<b>.+?)\s*$", re.IGNORECASE
+)
+_VS_RE = re.compile(
+    r"^\s*(?P<a>.+?)\s+(?:vs|versus|against)\s+(?P<b>.+?)\s*$", re.IGNORECASE
+)
 _GLOBAL_SEASON_MODIFIER_RES = [
     re.compile(r"\b(?:in|for)\s+((?:19|20)\d{2})\b", re.IGNORECASE),
     re.compile(r"\bseason\s+((?:19|20)\d{2})\b", re.IGNORECASE),
     re.compile(r"\b((?:19|20)\d{2})\b", re.IGNORECASE),
 ]
-_TRAILING_FRAGMENT_STOPWORDS = {"in", "season", "year", "the", "a", "an", "of", "trend", "to"}
+_TRAILING_FRAGMENT_STOPWORDS = {
+    "in",
+    "season",
+    "year",
+    "the",
+    "a",
+    "an",
+    "of",
+    "trend",
+    "to",
+}
 
 _TREND_KEYWORDS_RE = re.compile(r"\b(trend|career\s+arc)\b", re.IGNORECASE)
 _LAST_N_YEARS_RE = re.compile(
@@ -38,7 +52,9 @@ _YEAR_RANGE_RE = re.compile(
 _TREND_MODIFIER_STRIP_RES = [
     re.compile(r"\bcareer\s+arc\b", re.IGNORECASE),
     re.compile(r"\btrend\b", re.IGNORECASE),
-    re.compile(r"\b(?:over\s+(?:the\s+)?)?last\s+\d+\s+(?:years?|seasons?)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:over\s+(?:the\s+)?)?last\s+\d+\s+(?:years?|seasons?)\b", re.IGNORECASE
+    ),
 ]
 
 _MONTH_NAME_TO_INT = {
@@ -102,7 +118,9 @@ _AWAY_RE = re.compile(r"\b(?:on the road|away)\b", re.IGNORECASE)
 
 _COUNT_PAIR_RE = re.compile(r"\b([0-3])\s*-\s*([0-2])\s*count\b", re.IGNORECASE)
 _FULL_COUNT_RE = re.compile(r"\bfull\s+count\b", re.IGNORECASE)
-_BALLS_ANY_STRIKES_RE = re.compile(r"\b([0-3])\s+balls?\s+any\s+strikes?\b", re.IGNORECASE)
+_BALLS_ANY_STRIKES_RE = re.compile(
+    r"\b([0-3])\s+balls?\s+any\s+strikes?\b", re.IGNORECASE
+)
 _ANY_BALLS_RE = re.compile(r"\bany\s+balls?\b", re.IGNORECASE)
 _ANY_STRIKES_RE = re.compile(r"\bany\s+strikes?\b", re.IGNORECASE)
 _BALLS_RE = re.compile(r"\b([0-3])\s+balls?\b", re.IGNORECASE)
@@ -159,7 +177,9 @@ def parse_nl_query(
     selected_stats, stat_spans = _parse_stats(text, stats_allowed)
     spans.extend(stat_spans)
 
-    filter_values, filter_positions, filter_spans, filter_warnings = _parse_filters(text)
+    filter_values, filter_positions, filter_spans, filter_warnings = _parse_filters(
+        text
+    )
     warnings.extend(filter_warnings)
     spans.extend(filter_spans)
 
@@ -176,12 +196,18 @@ def parse_nl_query(
     link_seasons = True
 
     comp_a_frag, comp_b_frag = _extract_comparison_fragments(player_text)
-    comparison_intent = bool(comp_a_frag and comp_b_frag) or bool(_COMPARISON_HINT_RE.search(player_text))
+    comparison_intent = bool(comp_a_frag and comp_b_frag) or bool(
+        _COMPARISON_HINT_RE.search(player_text)
+    )
     if comparison_intent and comp_a_frag is not None and comp_b_frag is not None:
         comparison_mode = True
 
-        frag_year_a, cleaned_frag_a = _extract_fragment_season(comp_a_frag, valid_seasons, warnings)
-        frag_year_b, cleaned_frag_b = _extract_fragment_season(comp_b_frag, valid_seasons, warnings)
+        frag_year_a, cleaned_frag_a = _extract_fragment_season(
+            comp_a_frag, valid_seasons, warnings
+        )
+        frag_year_b, cleaned_frag_b = _extract_fragment_season(
+            comp_b_frag, valid_seasons, warnings
+        )
         player_a_fragment = cleaned_frag_a
         player_b_fragment = cleaned_frag_b
 
@@ -215,8 +241,12 @@ def parse_nl_query(
             season_b = same_year
             link_seasons = True
         elif len(parsed_years) >= 2:
-            season_a = _normalize_parsed_season(parsed_years[0], valid_seasons, warnings)
-            season_b = _normalize_parsed_season(parsed_years[1], valid_seasons, warnings)
+            season_a = _normalize_parsed_season(
+                parsed_years[0], valid_seasons, warnings
+            )
+            season_b = _normalize_parsed_season(
+                parsed_years[1], valid_seasons, warnings
+            )
             if season_a is not None and season_b is not None:
                 link_seasons = season_a == season_b
             elif season_a is not None or season_b is not None:
@@ -225,13 +255,21 @@ def parse_nl_query(
                 season_b = same_year
                 link_seasons = True
         elif len(parsed_years) == 1:
-            single_year = _normalize_parsed_season(parsed_years[0], valid_seasons, warnings)
+            single_year = _normalize_parsed_season(
+                parsed_years[0], valid_seasons, warnings
+            )
             season_a = single_year
             season_b = single_year
             link_seasons = True
 
-        if resolved_a is not None and resolved_b is not None and resolved_a == resolved_b:
-            warnings.append("Comparison players resolved to the same player; pick two distinct names.")
+        if (
+            resolved_a is not None
+            and resolved_b is not None
+            and resolved_a == resolved_b
+        ):
+            warnings.append(
+                "Comparison players resolved to the same player; pick two distinct names."
+            )
         elif resolved_a is None and resolved_b is None:
             warnings.append(
                 "Could not parse both comparison players; interpreted as a single-player query."
@@ -246,7 +284,9 @@ def parse_nl_query(
                 warnings,
             )
             player_a_fragment = cleaned_single_frag
-            player_a, warn_single, _ = _resolve_player_name(cleaned_single_frag, player_names)
+            player_a, warn_single, _ = _resolve_player_name(
+                cleaned_single_frag, player_names
+            )
             if warn_single:
                 warnings.append(warn_single)
             if single_year is not None:
@@ -268,7 +308,9 @@ def parse_nl_query(
             warnings,
         )
         player_a_fragment = cleaned_single_frag
-        player_a, warn_single, _ = _resolve_player_name(cleaned_single_frag, player_names)
+        player_a, warn_single, _ = _resolve_player_name(
+            cleaned_single_frag, player_names
+        )
         if warn_single:
             warnings.append(warn_single)
         if single_year is not None:
@@ -283,7 +325,9 @@ def parse_nl_query(
             warnings,
         )
         player_a_fragment = cleaned_single_frag
-        player_a, warn_single, _ = _resolve_player_name(cleaned_single_frag, player_names)
+        player_a, warn_single, _ = _resolve_player_name(
+            cleaned_single_frag, player_names
+        )
         if warn_single:
             warnings.append(warn_single)
         if single_year is not None:
@@ -292,7 +336,9 @@ def parse_nl_query(
             link_seasons = True
 
     if season_a is None and season_b is None and parsed_years:
-        fallback_year = _normalize_parsed_season(parsed_years[-1], valid_seasons, warnings)
+        fallback_year = _normalize_parsed_season(
+            parsed_years[-1], valid_seasons, warnings
+        )
         season_a = fallback_year
         season_b = fallback_year
         link_seasons = True
@@ -318,7 +364,9 @@ def parse_nl_query(
     }
 
 
-def _parse_stats(text: str, allowed_stats: Sequence[str]) -> tuple[list[str], list[tuple[int, int]]]:
+def _parse_stats(
+    text: str, allowed_stats: Sequence[str]
+) -> tuple[list[str], list[tuple[int, int]]]:
     spans: list[tuple[int, int]] = []
     found: set[str] = set()
     allowed_set = set(allowed_stats)
@@ -340,7 +388,9 @@ def _parse_filters(
     spans: list[tuple[int, int]] = []
     warnings: list[str] = []
 
-    def _set_filter(filter_type: str, params: dict[str, Any], start: int, end: int) -> None:
+    def _set_filter(
+        filter_type: str, params: dict[str, Any], start: int, end: int
+    ) -> None:
         filters[filter_type] = params
         positions[filter_type] = start
         spans.append((start, end))
@@ -388,9 +438,13 @@ def _parse_filters(
     for m in _FULL_COUNT_RE.finditer(text):
         count_events.append((m.start(), m.end(), "full_count", 3, 2))
     for m in _COUNT_PAIR_RE.finditer(text):
-        count_events.append((m.start(), m.end(), "pair", int(m.group(1)), int(m.group(2))))
+        count_events.append(
+            (m.start(), m.end(), "pair", int(m.group(1)), int(m.group(2)))
+        )
     for m in _BALLS_ANY_STRIKES_RE.finditer(text):
-        count_events.append((m.start(), m.end(), "balls_any_strikes", int(m.group(1)), None))
+        count_events.append(
+            (m.start(), m.end(), "balls_any_strikes", int(m.group(1)), None)
+        )
     for m in _ANY_BALLS_RE.finditer(text):
         count_events.append((m.start(), m.end(), "any_balls", None, None))
     for m in _ANY_STRIKES_RE.finditer(text):
@@ -467,7 +521,9 @@ def _build_filter_rows(
     return rows
 
 
-def _validate_filter(filter_type: str, params: dict[str, Any]) -> tuple[bool, str | None]:
+def _validate_filter(
+    filter_type: str, params: dict[str, Any]
+) -> tuple[bool, str | None]:
     if filter_type == "pitcher_hand":
         hand = params.get("hand")
         if hand not in {"L", "R"}:
@@ -504,7 +560,9 @@ def _validate_filter(filter_type: str, params: dict[str, Any]) -> tuple[bool, st
             return False, "Dropped count filter with both balls and strikes set to any."
         if balls is not None and (not isinstance(balls, int) or balls < 0 or balls > 3):
             return False, "Dropped count filter with invalid balls value."
-        if strikes is not None and (not isinstance(strikes, int) or strikes < 0 or strikes > 2):
+        if strikes is not None and (
+            not isinstance(strikes, int) or strikes < 0 or strikes > 2
+        ):
             return False, "Dropped count filter with invalid strikes value."
         return True, None
 
@@ -567,8 +625,7 @@ def _resolve_player_name(
         )
         chosen = ranked[0]
         warning = (
-            f"Player fragment '{fragment}' matched multiple players; "
-            f"using '{chosen}'."
+            f"Player fragment '{fragment}' matched multiple players; using '{chosen}'."
         )
         return chosen, warning, True
 
@@ -647,7 +704,9 @@ def _normalize_parsed_season(
     if season is None:
         return None
     if valid_seasons is not None and season not in valid_seasons:
-        warnings.append(f"Parsed season {season} is not in available seasons; season unchanged.")
+        warnings.append(
+            f"Parsed season {season} is not in available seasons; season unchanged."
+        )
         return None
     return season
 
@@ -658,7 +717,9 @@ def _extract_fragment_season(
     warnings: list[str],
 ) -> tuple[int | None, str]:
     years = [int(m.group(0)) for m in _YEAR_RE.finditer(fragment or "")]
-    parsed_season = _normalize_parsed_season(years[-1], valid_seasons, warnings) if years else None
+    parsed_season = (
+        _normalize_parsed_season(years[-1], valid_seasons, warnings) if years else None
+    )
     cleaned = _YEAR_RE.sub(" ", fragment or "")
     return parsed_season, _clean_player_fragment(cleaned)
 

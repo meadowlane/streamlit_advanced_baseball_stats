@@ -5,9 +5,19 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from stats.filters import SplitFilters, apply_filters, get_prepared_df_cached, prepare_df
+from stats.filters import (
+    SplitFilters,
+    apply_filters,
+    get_prepared_df_cached,
+    prepare_df,
+)
 from stats.percentiles import build_league_distributions, get_all_percentiles
-from stats.splits import _compute_stats, compute_pitch_arsenal, get_splits, get_trend_stats
+from stats.splits import (
+    _compute_stats,
+    compute_pitch_arsenal,
+    get_splits,
+    get_trend_stats,
+)
 
 
 def test_prepare_df_outputs_downstream_columns_and_types(statcast_df_factory) -> None:
@@ -87,8 +97,12 @@ def test_pitch_arsenal_updates_when_inning_filter_changes(statcast_df_factory) -
     prepared = prepare_df(raw)
 
     all_mix = compute_pitch_arsenal(prepared)
-    early_mix = compute_pitch_arsenal(apply_filters(prepared, SplitFilters(inning_max=3)))
-    late_mix = compute_pitch_arsenal(apply_filters(prepared, SplitFilters(inning_min=4)))
+    early_mix = compute_pitch_arsenal(
+        apply_filters(prepared, SplitFilters(inning_max=3))
+    )
+    late_mix = compute_pitch_arsenal(
+        apply_filters(prepared, SplitFilters(inning_min=4))
+    )
 
     assert set(all_mix["Pitch"]) == {"Four-Seam Fastball", "Slider"}
     assert early_mix["Pitch"].tolist() == ["Four-Seam Fastball"]

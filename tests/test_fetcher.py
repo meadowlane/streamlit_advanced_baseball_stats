@@ -1,6 +1,6 @@
 """Unit tests for data/fetcher.py — all network calls are mocked."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import pandas as pd
 import pytest
 
@@ -25,29 +25,31 @@ from data.fetcher import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_batting_df(names=("Aaron Judge", "Shohei Ohtani")) -> pd.DataFrame:
     """Minimal FanGraphs-shaped DataFrame with all 6 core stat columns."""
     rows = []
     for i, name in enumerate(names):
-        rows.append({
-            "IDfg": 1000 + i,
-            "Name": name,
-            "Team": "NYY" if i == 0 else "LAD",
-            "Season": 2024,
-            "PA": 600,
-            "wOBA": 0.400 + i * 0.010,
-            "xwOBA": 0.395 + i * 0.010,
-            "K%": 0.22 - i * 0.01,
-            "BB%": 0.12 + i * 0.01,
-            "HardHit%": 55.0 + i,
-            "Barrel%": 20.0 + i,
-        })
+        rows.append(
+            {
+                "IDfg": 1000 + i,
+                "Name": name,
+                "Team": "NYY" if i == 0 else "LAD",
+                "Season": 2024,
+                "PA": 600,
+                "wOBA": 0.400 + i * 0.010,
+                "xwOBA": 0.395 + i * 0.010,
+                "K%": 0.22 - i * 0.01,
+                "BB%": 0.12 + i * 0.01,
+                "HardHit%": 55.0 + i,
+                "Barrel%": 20.0 + i,
+            }
+        )
     return pd.DataFrame(rows)
 
 
 def _make_statcast_df(n=100) -> pd.DataFrame:
     """Minimal Statcast-shaped DataFrame covering STATCAST_KEEP_COLS."""
-    import numpy as np
 
     rng = pd.date_range("2024-04-01", periods=n, freq="D")
     data = {
@@ -73,6 +75,7 @@ def _make_statcast_df(n=100) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # _fetch_batting_stats
 # ---------------------------------------------------------------------------
+
 
 class TestFetchBattingStats:
     @patch("data.fetcher.pb.batting_stats")
@@ -107,7 +110,9 @@ class TestFetchBattingStats:
     @patch("data.fetcher._last_completed_season_year", return_value=2025)
     @patch("data.fetcher.pb.batting_stats")
     @patch("data.fetcher.pb.cache.enable")
-    def test_future_season_skips_pybaseball_and_returns_empty(self, mock_cache, mock_batting, _mock_last):
+    def test_future_season_skips_pybaseball_and_returns_empty(
+        self, mock_cache, mock_batting, _mock_last
+    ):
         df = _fetch_batting_stats(2026)
         assert df.empty
         assert "warning" in df.attrs
@@ -117,7 +122,9 @@ class TestFetchBattingStats:
     @patch("data.fetcher._last_completed_season_year", return_value=2025)
     @patch("data.fetcher.pb.batting_stats", side_effect=ValueError("parse error"))
     @patch("data.fetcher.pb.cache.enable")
-    def test_pybaseball_error_returns_empty_with_warning(self, mock_cache, mock_batting, _mock_last):
+    def test_pybaseball_error_returns_empty_with_warning(
+        self, mock_cache, mock_batting, _mock_last
+    ):
         df = _fetch_batting_stats(2025)
         assert df.empty
         assert "warning" in df.attrs
@@ -128,6 +135,7 @@ class TestFetchBattingStats:
 # ---------------------------------------------------------------------------
 # _ensure_traditional_slash_stats
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureTraditionalSlashStats:
     def test_maps_existing_case_insensitive_columns(self):
@@ -166,9 +174,13 @@ class TestEnsureTraditionalSlashStats:
         )
         out = _ensure_traditional_slash_stats(df)
         assert float(out.loc[0, "AVG"]) == pytest.approx(0.280, abs=1e-9)
-        assert float(out.loc[0, "OBP"]) == pytest.approx((140 + 60) / (500 + 60), abs=1e-9)
+        assert float(out.loc[0, "OBP"]) == pytest.approx(
+            (140 + 60) / (500 + 60), abs=1e-9
+        )
         assert float(out.loc[0, "SLG"]) == pytest.approx(255 / 500, abs=1e-9)
-        assert float(out.loc[0, "OPS"]) == pytest.approx(((140 + 60) / (500 + 60)) + (255 / 500), abs=1e-9)
+        assert float(out.loc[0, "OPS"]) == pytest.approx(
+            ((140 + 60) / (500 + 60)) + (255 / 500), abs=1e-9
+        )
 
     def test_zero_denominators_return_nan(self):
         df = pd.DataFrame(
@@ -196,6 +208,7 @@ class TestEnsureTraditionalSlashStats:
 # _fetch_fg_batting_wrc_plus
 # ---------------------------------------------------------------------------
 
+
 class TestFetchFgBattingWrcPlus:
     @patch("data.fetcher.pb.batting_stats")
     @patch("data.fetcher.pb.cache.enable")
@@ -208,7 +221,9 @@ class TestFetchFgBattingWrcPlus:
         )
         df = _fetch_fg_batting_wrc_plus(2024)
 
-        assert set(["season", "IDfg", "Name", "Team", "name_team_key", "wRC+"]).issubset(df.columns)
+        assert set(
+            ["season", "IDfg", "Name", "Team", "name_team_key", "wRC+"]
+        ).issubset(df.columns)
         assert df["season"].nunique() == 1 and int(df["season"].iloc[0]) == 2024
         assert pd.api.types.is_numeric_dtype(df["wRC+"])
         assert df["name_team_key"].iloc[0] == "aaron judge|NYY"
@@ -224,7 +239,9 @@ class TestFetchFgBattingWrcPlus:
     @patch("data.fetcher.pb.batting_stats")
     @patch("data.fetcher.pb.cache.enable")
     def test_missing_wrc_col_returns_empty(self, mock_cache, mock_batting):
-        mock_batting.return_value = pd.DataFrame([{"IDfg": 1001, "Name": "Aaron Judge", "Team": "NYY"}])
+        mock_batting.return_value = pd.DataFrame(
+            [{"IDfg": 1001, "Name": "Aaron Judge", "Team": "NYY"}]
+        )
         df = _fetch_fg_batting_wrc_plus(2024)
         assert df.empty
 
@@ -233,11 +250,21 @@ class TestFetchFgBattingWrcPlus:
 # _fetch_statcast_batter
 # ---------------------------------------------------------------------------
 
+
 class TestFetchStatcastBatter:
     def test_batter_keep_cols_is_superset(self):
         for col in STATCAST_KEEP_COLS:
             assert col in BATTER_KEEP_COLS
-        for col in ["pitch_type", "release_speed", "plate_x", "plate_z", "sz_top", "sz_bot", "pfx_x", "pfx_z"]:
+        for col in [
+            "pitch_type",
+            "release_speed",
+            "plate_x",
+            "plate_z",
+            "sz_top",
+            "sz_bot",
+            "pfx_x",
+            "pfx_z",
+        ]:
             assert col in BATTER_KEEP_COLS
 
     @patch("data.fetcher.pb.statcast_batter")
@@ -273,7 +300,9 @@ class TestFetchStatcastBatter:
 
     @patch("data.fetcher.pb.statcast_batter")
     @patch("data.fetcher.pb.cache.enable")
-    def test_fetch_statcast_batter_keeps_pitch_location_cols(self, mock_cache, mock_statcast):
+    def test_fetch_statcast_batter_keeps_pitch_location_cols(
+        self, mock_cache, mock_statcast
+    ):
         full_df = _make_statcast_df()
         full_df["pitch_type"] = "FF"
         full_df["release_speed"] = 96.1
@@ -285,7 +314,16 @@ class TestFetchStatcastBatter:
         full_df["pfx_z"] = 1.10
         mock_statcast.return_value = full_df
         df = _fetch_statcast_batter(660271, 2024)
-        for col in ["pitch_type", "release_speed", "plate_x", "plate_z", "sz_top", "sz_bot", "pfx_x", "pfx_z"]:
+        for col in [
+            "pitch_type",
+            "release_speed",
+            "plate_x",
+            "plate_z",
+            "sz_top",
+            "sz_bot",
+            "pfx_x",
+            "pfx_z",
+        ]:
             assert col in df.columns
 
     @patch("data.fetcher.pb.statcast_batter")
@@ -301,6 +339,7 @@ class TestFetchStatcastBatter:
 # ---------------------------------------------------------------------------
 # _fetch_pitching_stats
 # ---------------------------------------------------------------------------
+
 
 class TestFetchPitchingStats:
     @patch("data.fetcher.pb.pitching_stats")
@@ -327,7 +366,9 @@ class TestFetchPitchingStats:
     @patch("data.fetcher._last_completed_season_year", return_value=2025)
     @patch("data.fetcher.pb.pitching_stats")
     @patch("data.fetcher.pb.cache.enable")
-    def test_fetch_pitching_stats_future_season_returns_empty(self, mock_cache, mock_pitching, _mock_last):
+    def test_fetch_pitching_stats_future_season_returns_empty(
+        self, mock_cache, mock_pitching, _mock_last
+    ):
         df = _fetch_pitching_stats(2026)
         assert df.empty
         assert "warning" in df.attrs
@@ -337,7 +378,9 @@ class TestFetchPitchingStats:
     @patch("data.fetcher._last_completed_season_year", return_value=2025)
     @patch("data.fetcher.pb.pitching_stats", side_effect=ValueError("parse error"))
     @patch("data.fetcher.pb.cache.enable")
-    def test_pybaseball_error_returns_empty_with_warning(self, mock_cache, mock_pitching, _mock_last):
+    def test_pybaseball_error_returns_empty_with_warning(
+        self, mock_cache, mock_pitching, _mock_last
+    ):
         df = _fetch_pitching_stats(2025)
         assert df.empty
         assert "warning" in df.attrs
@@ -348,6 +391,7 @@ class TestFetchPitchingStats:
 # ---------------------------------------------------------------------------
 # _fetch_statcast_pitcher
 # ---------------------------------------------------------------------------
+
 
 class TestFetchStatcastPitcher:
     def test_pitcher_keep_cols_is_superset(self):
@@ -381,7 +425,9 @@ class TestFetchStatcastPitcher:
 
     @patch("data.fetcher.pb.statcast_pitcher")
     @patch("data.fetcher.pb.cache.enable")
-    def test_fetch_statcast_pitcher_keeps_expected_cols(self, mock_cache, mock_statcast):
+    def test_fetch_statcast_pitcher_keeps_expected_cols(
+        self, mock_cache, mock_statcast
+    ):
         full_df = _make_statcast_df()
         full_df["pitch_type"] = "FF"
         full_df["release_speed"] = 96.1
@@ -405,6 +451,7 @@ class TestFetchStatcastPitcher:
 # _lookup_player
 # ---------------------------------------------------------------------------
 
+
 class TestLookupPlayer:
     @patch("data.fetcher.pb.playerid_lookup")
     def test_passes_names_to_pybaseball(self, mock_lookup):
@@ -424,6 +471,7 @@ class TestLookupPlayer:
 # ---------------------------------------------------------------------------
 # get_player_row
 # ---------------------------------------------------------------------------
+
 
 class TestGetPlayerRow:
     def test_returns_matching_row(self):
@@ -446,6 +494,7 @@ class TestGetPlayerRow:
 # ---------------------------------------------------------------------------
 # assert_core_stats_present
 # ---------------------------------------------------------------------------
+
 
 class TestAssertCoreStatsPresent:
     def test_passes_when_all_cols_present(self):
