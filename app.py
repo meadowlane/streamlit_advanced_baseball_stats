@@ -516,6 +516,55 @@ def _render_headline_md(text: str) -> None:
     )
 
 
+def _render_section_heading(title: str, *, top_margin_px: int = 14) -> None:
+    """Render a consistent subsection heading with breathing room."""
+    st.markdown(
+        f'<p style="font-size:15px;font-weight:700;color:rgba(255,255,255,0.92);'
+        f'letter-spacing:0.01em;margin:{int(top_margin_px)}px 0 8px;">{title}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_batter_headline_md(player_row: "pd.Series | None", sample_text: str | None = None) -> None:
+    """Render batter headline with wRC+ emphasis and secondary slash/wOBA line."""
+    if player_row is None:
+        st.markdown(
+            '<p style="font-size:26px;font-weight:800;color:#f0f0f0;line-height:1.1;margin:0 0 2px;">—</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        wrc = _as_optional_float(player_row.get("wRC+"))
+        avg = _as_optional_float(player_row.get("AVG"))
+        obp = _as_optional_float(player_row.get("OBP"))
+        slg = _as_optional_float(player_row.get("SLG"))
+        woba = _as_optional_float(player_row.get("wOBA"))
+
+        wrc_part = "—" if wrc is None else f"{int(round(wrc))} wRC+"
+        woba_part = "—" if woba is None else f".{int(round(woba * 1000)):03d} wOBA"
+        if avg is None or obp is None or slg is None:
+            slash_part = "—"
+        else:
+            slash_part = (
+                f".{int(round(avg * 1000)):03d}/"
+                f".{int(round(obp * 1000)):03d}/"
+                f".{int(round(slg * 1000)):03d}"
+            )
+
+        st.markdown(
+            (
+                '<div style="margin:0 0 2px;">'
+                f'<p style="font-size:27px;font-weight:800;color:#f5f5f5;line-height:1.1;margin:0 0 2px;">{wrc_part}</p>'
+                '<p style="font-size:15px;font-weight:500;color:rgba(255,255,255,0.72);line-height:1.2;margin:0;">'
+                f'{slash_part} <span style="color:rgba(255,255,255,0.42);">•</span> '
+                f'<span style="color:rgba(255,255,255,0.82);">{woba_part}</span>'
+                "</p></div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    if sample_text is not None:
+        st.caption(f"Sample size: {sample_text}")
+
+
 def _render_subheading_md(team: str, season: int) -> None:
     """Render team · season in slightly-larger subdued text, no player type."""
     st.markdown(
@@ -540,34 +589,28 @@ def _render_pitcher_stats_tiered(
     tier3 += [s for s in PITCHER_STAT_ORDER if s in selected_stats and s not in covered]
 
     if tier2_outcome:
-        st.markdown("**Run Prevention**")
+        _render_section_heading("Run Prevention", top_margin_px=4)
         stat_cards_row(
             player_stats, percentiles, color_tiers,
             stats_order=tier2_outcome, cols_per_row=3,
             label_overrides=_PITCHER_STAT_LABELS,
         )
-        season_only = [s for s in tier2_outcome if s in PITCHER_SEASON_ONLY_STATS]
-        if season_only:
-            st.caption(f"Season-level (not filter-affected): {', '.join(season_only)}.")
 
     if tier2_dominance:
-        st.markdown("**Command & Dominance**")
+        _render_section_heading("Command & Dominance")
         stat_cards_row(
             player_stats, percentiles, color_tiers,
-            stats_order=tier2_dominance, cols_per_row=3,
+            stats_order=tier2_dominance, cols_per_row=2,
             label_overrides=_PITCHER_STAT_LABELS,
         )
 
     if tier3:
-        st.markdown("**Contact Quality & Stuff**")
+        _render_section_heading("Contact Quality & Stuff")
         stat_cards_row(
             player_stats, percentiles, color_tiers,
-            stats_order=tier3, cols_per_row=3,
+            stats_order=tier3, cols_per_row=2,
             label_overrides=_PITCHER_STAT_LABELS,
         )
-        season_only = [s for s in tier3 if s in PITCHER_SEASON_ONLY_STATS]
-        if season_only:
-            st.caption(f"Season-level: {', '.join(season_only)}.")
 
     if not (tier2_outcome or tier2_dominance or tier3):
         st.info("No stats selected.")
@@ -580,7 +623,6 @@ def _render_batter_stats_tiered(
     selected_stats: list[str],
 ) -> None:
     """Render batter stat cards: Tier 2 core row + Tier 3 expander."""
-    _batter_season_only = {"wRC+", "AVG", "OBP", "SLG", "OPS"}
     tier2 = [s for s in BATTER_TIER2_STATS if s in selected_stats]
     tier3 = [s for s in BATTER_TIER3_STATS if s in selected_stats]
     covered = set(tier2) | set(tier3)
@@ -593,9 +635,6 @@ def _render_batter_stats_tiered(
     if tier3:
         stat_cards_row(player_stats, percentiles, color_tiers,
                        stats_order=tier3, cols_per_row=3)
-        season_only = [s for s in tier3 if s in _batter_season_only]
-        if season_only:
-            st.caption(f"Season-level (not filter-affected): {', '.join(season_only)}.")
 
     if not (tier2 or tier3):
         st.info("No stats selected.")
@@ -1598,11 +1637,12 @@ if comparison_mode and team_b is not None:
         with header_col_a:
             st.markdown(f"**{selected_name}**")
             _render_subheading_md(team, season_a)
-            _render_headline_md(_format_batter_headline_line(player_row))
+            _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
             _render_subheading_md(team_b, season_b)
-            _render_headline_md(_format_batter_headline_line(player_row_b))
+            sample_text_b = _sample_size_text(sample_sizes_b, player_type) if sample_sizes_b is not None else None
+            _render_batter_headline_md(player_row_b, sample_text_b)
 else:
     if player_type == "Pitcher":
         st.subheader(selected_name)
@@ -1611,7 +1651,7 @@ else:
     else:
         st.subheader(selected_name)
         _render_subheading_md(team, season_a)
-        _render_headline_md(_format_batter_headline_line(player_row))
+        _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
 
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
@@ -1629,12 +1669,17 @@ else:
     st.caption(f"Active filters: {active_filter_summary}")
 
 st.subheader("Season Stats")
+if player_type == "Pitcher":
+    st.caption("Season-level metrics are preserved where filter-level equivalents are unavailable.")
+else:
+    st.caption("Season-level (not filter-affected): wRC+ and traditional slash stats.")
 pitcher_label_overrides = _PITCHER_STAT_LABELS if player_type == "Pitcher" else None
 if comparison_mode and player_stats_b is not None and percentiles_b is not None and color_tiers_b is not None:
     col_a, col_b, col_delta = st.columns(3)
     with col_a:
         st.markdown(f"**{selected_name}**")
-        st.caption(_sample_size_text(sample_sizes, player_type))
+        if player_type == "Pitcher":
+            st.caption(_sample_size_text(sample_sizes, player_type))
         _render_player_stat_grid(
             player_stats,
             percentiles,
@@ -1644,7 +1689,8 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
         )
     with col_b:
         st.markdown(f"**{selected_name_b}**")
-        st.caption(_sample_size_text(sample_sizes_b, player_type))
+        if player_type == "Pitcher":
+            st.caption(_sample_size_text(sample_sizes_b, player_type))
         _render_player_stat_grid(
             player_stats_b,
             percentiles_b,
@@ -1667,7 +1713,8 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
             label_overrides=pitcher_label_overrides,
         )
 else:
-    st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
+    if player_type == "Pitcher":
+        st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
     if player_type == "Pitcher":
         _render_pitcher_stats_tiered(player_stats, percentiles, color_tiers, selected_stats)
     else:
@@ -1678,7 +1725,8 @@ if (
     and traditional_percentiles is not None
     and traditional_color_tiers is not None
 ):
-    st.markdown("**Traditional Stats**")
+    _render_section_heading("Traditional Stats", top_margin_px=18)
+    st.caption("Slash line + OPS (percentiles vs qualified hitters).")
     if (
         comparison_mode
         and traditional_stats_b is not None
@@ -1694,6 +1742,7 @@ if (
                 traditional_color_tiers,
                 stats_order=TRADITIONAL_STATS,
                 cols_per_row=2,
+                compact=True,
             )
         with trad_col_b:
             st.markdown(f"**{selected_name_b}**")
@@ -1703,6 +1752,7 @@ if (
                 traditional_color_tiers_b,
                 stats_order=TRADITIONAL_STATS,
                 cols_per_row=2,
+                compact=True,
             )
     else:
         stat_cards_row(
@@ -1711,6 +1761,7 @@ if (
             traditional_color_tiers,
             stats_order=TRADITIONAL_STATS,
             cols_per_row=2,
+            compact=True,
         )
 
 st.divider()
