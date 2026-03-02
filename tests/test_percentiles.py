@@ -23,18 +23,19 @@ from stats.percentiles import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_season_df(n: int = 100) -> pd.DataFrame:
     """Minimal FanGraphs-shaped DataFrame with all 6 core stats as proportions."""
     rng = np.random.default_rng(42)
     return pd.DataFrame(
         {
             "Name": [f"Player {i}" for i in range(n)],
-            "wOBA":     rng.uniform(0.200, 0.450, n),
-            "xwOBA":    rng.uniform(0.200, 0.450, n),
-            "K%":       rng.uniform(0.050, 0.420, n),   # proportion
-            "BB%":      rng.uniform(0.030, 0.180, n),   # proportion
-            "HardHit%": rng.uniform(0.100, 0.650, n),   # proportion
-            "Barrel%":  rng.uniform(0.000, 0.250, n),   # proportion
+            "wOBA": rng.uniform(0.200, 0.450, n),
+            "xwOBA": rng.uniform(0.200, 0.450, n),
+            "K%": rng.uniform(0.050, 0.420, n),  # proportion
+            "BB%": rng.uniform(0.030, 0.180, n),  # proportion
+            "HardHit%": rng.uniform(0.100, 0.650, n),  # proportion
+            "Barrel%": rng.uniform(0.000, 0.250, n),  # proportion
         }
     )
 
@@ -45,6 +46,7 @@ _UNIFORM_10 = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
 # ---------------------------------------------------------------------------
 # build_league_distributions
 # ---------------------------------------------------------------------------
+
 
 class TestBuildLeagueDistributions:
     def test_returns_all_core_stats(self):
@@ -119,7 +121,16 @@ class TestBuildPitcherLeagueDistributions:
 
     def test_proportion_stats_scaled(self):
         dists = build_pitcher_league_distributions(self._make_pitcher_season_df())
-        for stat in ["K%", "BB%", "K-BB%", "HardHit%", "Barrel%", "GB%", "CSW%", "FirstStrike%"]:
+        for stat in [
+            "K%",
+            "BB%",
+            "K-BB%",
+            "HardHit%",
+            "Barrel%",
+            "GB%",
+            "CSW%",
+            "FirstStrike%",
+        ]:
             assert dists[stat].max() > 1.0, f"{stat} not scaled up"
             assert dists[stat].max() <= 100.0 + 1e-9
 
@@ -159,6 +170,7 @@ class TestBuildPitcherLeagueDistributions:
 # ---------------------------------------------------------------------------
 # compute_percentile
 # ---------------------------------------------------------------------------
+
 
 class TestComputePercentile:
     def test_median_value_near_50(self):
@@ -210,6 +222,7 @@ class TestComputePercentile:
 # get_percentile  (direction-aware wrapper)
 # ---------------------------------------------------------------------------
 
+
 class TestGetPercentile:
     def setup_method(self):
         self.dists = build_league_distributions(_make_season_df(200))
@@ -235,6 +248,7 @@ class TestGetPercentile:
 # get_all_percentiles
 # ---------------------------------------------------------------------------
 
+
 class TestGetAllPercentiles:
     def setup_method(self):
         self.dists = build_league_distributions(_make_season_df(200))
@@ -250,9 +264,12 @@ class TestGetAllPercentiles:
 
     def test_all_six_stats(self):
         player = {
-            "wOBA": 0.350, "xwOBA": 0.340,
-            "K%": 22.0, "BB%": 10.0,
-            "HardHit%": 45.0, "Barrel%": 8.0,
+            "wOBA": 0.350,
+            "xwOBA": 0.340,
+            "K%": 22.0,
+            "BB%": 10.0,
+            "HardHit%": 45.0,
+            "Barrel%": 8.0,
         }
         result = get_all_percentiles(player, self.dists)
         assert len(result) == 6
@@ -262,7 +279,9 @@ class TestGetAllPercentiles:
     def test_pitcher_direction_woba_lower(self):
         dists = {"wOBA": np.array([0.200, 0.300, 0.400])}
         low = get_all_percentiles({"wOBA": 0.200}, dists, player_type="Pitcher")["wOBA"]
-        high = get_all_percentiles({"wOBA": 0.400}, dists, player_type="Pitcher")["wOBA"]
+        high = get_all_percentiles({"wOBA": 0.400}, dists, player_type="Pitcher")[
+            "wOBA"
+        ]
         assert low > high
 
     def test_pitcher_direction_k_higher(self):
@@ -278,13 +297,19 @@ class TestGetAllPercentiles:
         }
 
         batter_default = get_all_percentiles({"K%": 10.0, "wOBA": 0.400}, dists)
-        batter_explicit = get_all_percentiles({"K%": 10.0, "wOBA": 0.400}, dists, player_type="Batter")
+        batter_explicit = get_all_percentiles(
+            {"K%": 10.0, "wOBA": 0.400}, dists, player_type="Batter"
+        )
         assert batter_default == batter_explicit
 
         k_low = get_all_percentiles({"K%": 10.0}, dists, player_type="Batter")["K%"]
         k_high = get_all_percentiles({"K%": 30.0}, dists, player_type="Batter")["K%"]
-        woba_low = get_all_percentiles({"wOBA": 0.200}, dists, player_type="Batter")["wOBA"]
-        woba_high = get_all_percentiles({"wOBA": 0.400}, dists, player_type="Batter")["wOBA"]
+        woba_low = get_all_percentiles({"wOBA": 0.200}, dists, player_type="Batter")[
+            "wOBA"
+        ]
+        woba_high = get_all_percentiles({"wOBA": 0.400}, dists, player_type="Batter")[
+            "wOBA"
+        ]
         assert k_low > k_high
         assert woba_high > woba_low
 
@@ -293,19 +318,23 @@ class TestGetAllPercentiles:
 # get_color_tier
 # ---------------------------------------------------------------------------
 
+
 class TestGetColorTier:
-    @pytest.mark.parametrize("pct,expected_name", [
-        (95.0, "red"),
-        (90.0, "red"),
-        (85.0, "orange"),
-        (70.0, "orange"),
-        (60.0, "yellow"),
-        (50.0, "yellow"),
-        (40.0, "blue"),
-        (30.0, "blue"),
-        (20.0, "gray"),
-        (0.0,  "gray"),
-    ])
+    @pytest.mark.parametrize(
+        "pct,expected_name",
+        [
+            (95.0, "red"),
+            (90.0, "red"),
+            (85.0, "orange"),
+            (70.0, "orange"),
+            (60.0, "yellow"),
+            (50.0, "yellow"),
+            (40.0, "blue"),
+            (30.0, "blue"),
+            (20.0, "gray"),
+            (0.0, "gray"),
+        ],
+    )
     def test_tier_boundaries(self, pct, expected_name):
         assert get_color_tier(pct)["name"] == expected_name
 
@@ -330,6 +359,7 @@ class TestGetColorTier:
 # ---------------------------------------------------------------------------
 # get_all_color_tiers
 # ---------------------------------------------------------------------------
+
 
 class TestGetAllColorTiers:
     def test_keys_match_input(self):

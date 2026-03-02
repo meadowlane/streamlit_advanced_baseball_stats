@@ -312,14 +312,20 @@ def _compact_better_text(
     return f"{batter_icon} both"
 
 
-def render_glossary(mode: Literal["full", "compact"] = "full", player_type: str | None = None) -> None:
+def render_glossary(
+    mode: Literal["full", "compact"] = "full", player_type: str | None = None
+) -> None:
     """Render the full glossary and percentile explainer inside a Streamlit expander."""
     if mode == "compact":
-        st.caption("Color scale: 90-100 Elite | 70-89 Above avg | 50-69 Avg | 30-49 Below avg | 0-29 Well below")
+        st.caption(
+            "Color scale: 90-100 Elite | 70-89 Above avg | 50-69 Avg | 30-49 Below avg | 0-29 Well below"
+        )
         rows = []
         for stat, info in STAT_DEFINITIONS.items():
             batter_direction = str(info["direction"])
-            pitcher_direction = str(info["direction_pitcher"]) if info["direction_pitcher"] else None
+            pitcher_direction = (
+                str(info["direction_pitcher"]) if info["direction_pitcher"] else None
+            )
             meaning = _compact_meaning_text(str(info["definition"]))
             context = _compact_context_text(str(info["context"]))
             if context:
