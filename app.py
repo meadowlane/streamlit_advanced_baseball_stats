@@ -83,6 +83,11 @@ PITCHER_EXTRA_STATS = [stat for stat in (PITCHER_CORE_STATS + PITCHER_SECONDARY_
 _DEFAULT_STATS = BATTER_EXTRA_STATS + CORE_STATS  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
 _PITCHER_STAT_LABELS = {"wOBA": "wOBA Allowed", "xwOBA": "xwOBA Allowed"}
+_QP_SEASON = "season"
+_QP_PLAYER_TYPE = "player_type"
+_QP_PLAYER_NAME = "player_name"
+_QP_PLAYER_ID = "player_id"
+_QP_SYNC_KEYS = (_QP_SEASON, _QP_PLAYER_TYPE, _QP_PLAYER_NAME, _QP_PLAYER_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +156,91 @@ _DELTA_TILE_HTML = """
   <div class="delta-value" style="color:{value_color};">{value}</div>
 </div>
 """
+
+
+def _qp_scalar(value: object) -> str | None:
+    """Return a single non-empty query-param value as string."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        if not value:
+            return None
+        value = value[0]
+    text = str(value).strip()
+    return text or None
+
+
+def _qp_int(value: object) -> int | None:
+    text = _qp_scalar(value)
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_player_type(value: object) -> str | None:
+    text = _qp_scalar(value)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered == "batter":
+        return "Batter"
+    if lowered == "pitcher":
+        return "Pitcher"
+    return None
+
+
+def _hydrate_selection_state_from_query_params() -> None:
+    """Initialize selector session-state keys from URL query params once."""
+    season_qp = _qp_int(st.query_params.get(_QP_SEASON))
+    if "season_a" not in st.session_state and season_qp in STATCAST_SEASONS:
+        st.session_state["season_a"] = int(season_qp)
+
+    if FEATURE_PITCHERS and "player_type" not in st.session_state:
+        player_type_qp = _normalize_player_type(st.query_params.get(_QP_PLAYER_TYPE))
+        if player_type_qp is not None:
+            st.session_state["player_type"] = player_type_qp
+
+    if "player_selectbox" not in st.session_state:
+        player_name_qp = _qp_scalar(st.query_params.get(_QP_PLAYER_NAME))
+        if player_name_qp is not None:
+            st.session_state["player_selectbox"] = player_name_qp
+
+    # Selection widgets are name-driven in this app; keep player_id as a URL
+    # hint/share token without attempting ID-only name resolution here.
+    if "selected_player_id" not in st.session_state:
+        player_id_qp = _qp_int(st.query_params.get(_QP_PLAYER_ID))
+        if player_id_qp is not None:
+            st.session_state["selected_player_id"] = int(player_id_qp)
+
+
+def _sync_selection_query_params(
+    *,
+    season: int,
+    player_type: str,
+    player_name: str | None,
+    player_id: int | None,
+) -> None:
+    """Sync core selector state to URL query params without unnecessary writes."""
+    desired: dict[str, str] = {
+        _QP_SEASON: str(int(season)),
+        _QP_PLAYER_TYPE: str(player_type),
+    }
+    if player_name is not None and str(player_name).strip():
+        desired[_QP_PLAYER_NAME] = str(player_name)
+    if player_id is not None:
+        desired[_QP_PLAYER_ID] = str(int(player_id))
+
+    for key in _QP_SYNC_KEYS:
+        current_val = _qp_scalar(st.query_params.get(key))
+        desired_val = desired.get(key)
+        if desired_val is None:
+            if key in st.query_params:
+                del st.query_params[key]
+        elif current_val != desired_val:
+            st.query_params[key] = desired_val
 
 
 def _available_filter_keys(player_type: str) -> list[str]:
@@ -374,6 +464,8 @@ def _render_delta_stat_grid(
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
+
+_hydrate_selection_state_from_query_params()
 
 with st.sidebar:
     st.title("⚾ MLB Splits")
@@ -910,6 +1002,13 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 if selected_name is None:
+    st.session_state.pop("selected_player_id", None)
+    _sync_selection_query_params(
+        season=season_a,
+        player_type=player_type,
+        player_name=None,
+        player_id=None,
+    )
     st.header("⚾ MLB Splits")
     if season_df.empty and season_df.attrs.get("warning"):
         st.warning(str(season_df.attrs["warning"]))
@@ -942,8 +1041,23 @@ with st.spinner("Resolving player ID…"):
     mlbam_id = get_mlbam_id(fg_id, player_name=selected_name)
 
 if mlbam_id is None:
+    st.session_state.pop("selected_player_id", None)
+    _sync_selection_query_params(
+        season=season_a,
+        player_type=player_type,
+        player_name=selected_name,
+        player_id=None,
+    )
     st.error(f"Could not resolve a Statcast ID for {selected_name}.")
     st.stop()
+
+st.session_state["selected_player_id"] = int(mlbam_id)
+_sync_selection_query_params(
+    season=season_a,
+    player_type=player_type,
+    player_name=selected_name,
+    player_id=int(mlbam_id),
+)
 
 team_b = None
 mlbam_id_b = None
