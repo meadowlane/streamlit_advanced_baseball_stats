@@ -1,6 +1,6 @@
-# MLB Splits
+# Baseball Atlas
 
-MLB Splits is a Streamlit app for exploring **advanced batter performance** using Statcast-aligned metrics and split views. It combines season-level context (percentiles vs league) with pitch/event-level filtering so you can answer questions like “how does this hitter perform late in games vs lefties?”
+Baseball Atlas is a Streamlit app for exploring **advanced batter performance** using Statcast-aligned metrics and split views. It combines season-level context (percentiles vs league) with pitch/event-level filtering so you can answer questions like “how does this hitter perform late in games vs lefties?”
 
 The app is currently a **batter-only MVP** focused on speed, clarity, and practical exploration. It supports side-by-side player comparison, customizable stat views, and a rules-based natural-language query box that can pre-populate players, filters, season, and stats.
 

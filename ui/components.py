@@ -1,4 +1,4 @@
-"""Reusable Streamlit UI components for mlb-splits.
+"""Reusable Streamlit UI components for baseball-atlas.
 
 All public functions render directly into the current Streamlit context.
 Data transformation helpers (format_stat_value, build_chart_df) are kept

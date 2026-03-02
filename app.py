@@ -50,7 +50,7 @@ from ui.components import (
 from ui.glossary import render_glossary
 
 st.set_page_config(
-    page_title="MLB Splits",
+    page_title="Baseball Atlas",
     page_icon="⚾",
     layout="wide",
 )
@@ -668,7 +668,7 @@ def _render_delta_stat_grid(
 _hydrate_selection_state_from_query_params()
 
 with st.sidebar:
-    st.title("⚾ MLB Splits")
+    st.title("⚾ Baseball Atlas")
     st.divider()
 
     if st.session_state.get("season_a") not in STATCAST_SEASONS:
@@ -1210,7 +1210,7 @@ if selected_name is None:
         player_id=None,
         compare_mode=False,
     )
-    st.header("⚾ MLB Splits")
+    st.header("⚾ Baseball Atlas")
     if season_df.empty and season_df.attrs.get("warning"):
         st.warning(str(season_df.attrs["warning"]))
     st.markdown(
