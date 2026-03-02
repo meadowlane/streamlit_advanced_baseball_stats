@@ -158,6 +158,16 @@ _QP_SYNC_KEYS = (
 )
 
 
+# Widget keys are mode-specific so Streamlit preserves batter and pitcher
+# selections independently across player-type switches.
+def _player_a_widget_key(player_type: str) -> str:
+    return "player_a_pitcher" if player_type == "Pitcher" else "player_a_batter"
+
+
+def _player_b_widget_key(player_type: str) -> str:
+    return "player_b_pitcher" if player_type == "Pitcher" else "player_b_batter"
+
+
 # ---------------------------------------------------------------------------
 # Filter UI helpers
 # ---------------------------------------------------------------------------
@@ -292,18 +302,21 @@ def _hydrate_selection_state_from_query_params() -> None:
         if player_type_qp is not None:
             st.session_state["player_type"] = player_type_qp
 
-    if "player_selectbox" not in st.session_state:
+    active_player_type = st.session_state.get("player_type", DEFAULT_PLAYER_TYPE)
+    player_a_key = _player_a_widget_key(active_player_type)
+    if player_a_key not in st.session_state:
         player_name_qp = _qp_scalar(st.query_params.get(_QP_PLAYER_NAME))
         if player_name_qp is not None:
-            st.session_state["player_selectbox"] = player_name_qp
+            st.session_state[player_a_key] = player_name_qp
 
     compare_qp = _qp_bool(st.query_params.get(_QP_COMPARE))
     if "comparison_mode" not in st.session_state and compare_qp is True:
         st.session_state["comparison_mode"] = True
-    if compare_qp is True and "player_b_selectbox" not in st.session_state:
+    player_b_key = _player_b_widget_key(active_player_type)
+    if compare_qp is True and player_b_key not in st.session_state:
         compare_name_qp = _qp_scalar(st.query_params.get(_QP_COMPARE_NAME))
         if compare_name_qp is not None:
-            st.session_state["player_b_selectbox"] = compare_name_qp
+            st.session_state[player_b_key] = compare_name_qp
 
     # Selection widgets are name-driven in this app; keep player_id as a URL
     # hint/share token without attempting ID-only name resolution here.
@@ -856,14 +869,14 @@ with st.sidebar:
         if "player_type" not in st.session_state:
             st.session_state["player_type"] = DEFAULT_PLAYER_TYPE
         player_type = st.radio("Player type", ["Batter", "Pitcher"], horizontal=True, key="player_type")
+    player_a_key = _player_a_widget_key(player_type)
+    player_b_key = _player_b_widget_key(player_type)
 
     _prev_player_type = st.session_state.get("_prev_player_type")
     if _prev_player_type is None:
         st.session_state["_prev_player_type"] = player_type
     elif _prev_player_type != player_type:
         st.session_state["_prev_player_type"] = player_type
-        st.session_state["player_selectbox"] = None
-        st.session_state["player_b_selectbox"] = None
         st.session_state.pop("selected_stats_requested", None)
         st.session_state.pop("trend_custom_stats", None)
         for stat in CORE_STATS + BATTER_EXTRA_STATS + PITCHER_EXTRA_STATS:
@@ -935,16 +948,16 @@ with st.sidebar:
 
             parsed_player_a = parsed_intent.get("player_a")
             if parsed_player_a is not None:
-                st.session_state["player_selectbox"] = parsed_player_a
+                st.session_state[player_a_key] = parsed_player_a
 
             parsed_comparison = bool(parsed_intent.get("comparison_mode"))
             parsed_player_b = parsed_intent.get("player_b")
             if parsed_comparison:
                 st.session_state["comparison_mode"] = True
-                st.session_state["player_b_selectbox"] = parsed_player_b
+                st.session_state[player_b_key] = parsed_player_b
             else:
                 st.session_state["comparison_mode"] = False
-                st.session_state["player_b_selectbox"] = None
+                st.session_state[player_b_key] = None
                 st.session_state["link_seasons"] = True
 
             parsed_rows = parsed_intent.get("filter_rows", [])
@@ -998,10 +1011,11 @@ with st.sidebar:
     # Clear logic: the button sets a pending flag; we honour it here, *before*
     # the widget is instantiated, which is the only point Streamlit allows
     # writing to a widget's own session-state key.
-    if st.session_state.pop("_clear_player_pending", False):
-        st.session_state["player_selectbox"] = None
+    clear_player_pending_key = f"_clear_player_pending_{player_type.lower()}"
+    if st.session_state.pop(clear_player_pending_key, False):
+        st.session_state[player_a_key] = None
 
-    _prev_player = st.session_state.get("player_selectbox")
+    _prev_player = st.session_state.get(player_a_key)
     _player_not_in_season = _prev_player is not None and _prev_player not in player_names
     if _player_not_in_season:
         player_names = [_prev_player] + player_names
@@ -1011,7 +1025,7 @@ with st.sidebar:
         options=player_names,
         index=None,
         placeholder="Type to search…",
-        key="player_selectbox",
+        key=player_a_key,
     )
 
     if _player_not_in_season and selected_name == _prev_player:
@@ -1019,7 +1033,7 @@ with st.sidebar:
 
     if selected_name is not None:
         if st.button("Clear player", width="stretch"):
-            st.session_state["_clear_player_pending"] = True
+            st.session_state[clear_player_pending_key] = True
             st.rerun()
 
     # ── Comparison mode + Player B ────────────────────────────────────────────
@@ -1042,8 +1056,9 @@ with st.sidebar:
 
         season_b = st.session_state["season_b"]
 
-        if st.session_state.pop("_clear_player_b_pending", False):
-            st.session_state["player_b_selectbox"] = None
+        clear_player_b_pending_key = f"_clear_player_b_pending_{player_type.lower()}"
+        if st.session_state.pop(clear_player_b_pending_key, False):
+            st.session_state[player_b_key] = None
 
         # Load Player B's FG data for the correct season (may differ from A when unlinked).
         if not link_seasons and season_b != season_a:
@@ -1065,7 +1080,7 @@ with st.sidebar:
         else:
             player_b_names = [n for n in player_names if n != selected_name]
 
-        _prev_player_b = st.session_state.get("player_b_selectbox")
+        _prev_player_b = st.session_state.get(player_b_key)
         _player_b_not_in_season = (
             _prev_player_b is not None and _prev_player_b not in player_b_names
         )
@@ -1077,7 +1092,7 @@ with st.sidebar:
             options=player_b_names,
             index=None,
             placeholder="Type to search…",
-            key="player_b_selectbox",
+            key=player_b_key,
         )
 
         if _player_b_not_in_season and selected_name_b == _prev_player_b:
@@ -1085,7 +1100,7 @@ with st.sidebar:
 
         if selected_name_b is not None:
             if st.button("Clear player B", width="stretch"):
-                st.session_state["_clear_player_b_pending"] = True
+                st.session_state[clear_player_b_pending_key] = True
                 st.rerun()
     else:
         link_seasons = True
