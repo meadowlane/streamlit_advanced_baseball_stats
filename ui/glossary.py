@@ -16,6 +16,18 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 
 STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
+    "wRC+": {
+        "full_name": "Weighted Runs Created Plus",
+        "definition": (
+            "A park- and league-adjusted hitting metric where 100 is league average. "
+            "Each point above or below 100 represents one percent better or worse than "
+            "league-average run creation (for example, 120 = 20% above average)."
+        ),
+        "context": "Excellent: 140+ · Above avg: 115+ · Average: 100 · Below avg: <85",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Rate index scaled to league average (100), not a raw percentage.",
+    },
     "wOBA": {
         "full_name": "Weighted On-Base Average",
         "definition": (
@@ -212,7 +224,8 @@ same role (batters vs pitchers) from the selected season leaderboard.
 
 Direction depends on role:
 
-- **Batters:** K% is inverted (lower is better).
+- **Batters:** K% is inverted (lower is better). Metrics like wRC+, wOBA,
+  xwOBA, BB%, HardHit%, and Barrel% are higher-is-better.
 - **Pitchers:** wOBA, xwOBA, BB%, HardHit%, and Barrel% are inverted (lower is better),
   while **K% is higher-is-better**.
 
