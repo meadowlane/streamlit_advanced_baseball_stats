@@ -1,4 +1,4 @@
-"""Glossary definitions and percentile explainer for mlb-splits.
+"""Glossary definitions and percentile explainer for baseball-atlas.
 
 All content lives in module-level constants so it can be tested independently
 of a Streamlit runtime. The render_glossary() function wires it into the UI.

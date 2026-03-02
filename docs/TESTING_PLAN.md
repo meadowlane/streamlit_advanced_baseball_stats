@@ -1,4 +1,4 @@
-# MLB Splits App — Testing Master Plan
+# Baseball Atlas App — Testing Master Plan
 
 ## Executive Summary
 

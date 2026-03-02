@@ -1,4 +1,4 @@
-# MLB Splits — TODO
+# Baseball Atlas — TODO
 
 Legend: `[ ]` pending, `[x]` done
 
