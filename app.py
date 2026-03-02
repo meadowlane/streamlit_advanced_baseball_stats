@@ -77,12 +77,69 @@ SPLIT_TYPE_MAP = {
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 BATTER_EXTRA_STATS = ["wRC+"]
 TRADITIONAL_STATS = ["AVG", "OBP", "SLG", "OPS"]
-PITCHER_CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "K-BB%", "CSW%"]
-PITCHER_SECONDARY_STATS = ["HardHit%", "Barrel%", "GB%", "Whiff%", "FirstStrike%"]
-PITCHER_EXTRA_STATS = [stat for stat in (PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS) if stat not in CORE_STATS]
-_DEFAULT_STATS = BATTER_EXTRA_STATS + CORE_STATS  # stats shown by default; Reset restores this
+BATTER_STAT_ORDER = BATTER_EXTRA_STATS + CORE_STATS
+BATTER_DEFAULT_STATS = BATTER_STAT_ORDER.copy()
+
+# Pitcher stats are ordered by MLB-evaluation priority:
+# run prevention -> dominance/control -> quality of contact -> stuff/arsenal.
+PITCHER_RUN_PREVENTION_STATS = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
+PITCHER_DOMINANCE_STATS = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+PITCHER_CONTACT_STATS = ["HardHit%", "Barrel%", "GB%", "FB%", "EV", "LA"]
+PITCHER_STUFF_STATS = ["FBv", "FirstStrike%"]
+PITCHER_STAT_ORDER = (
+    PITCHER_RUN_PREVENTION_STATS
+    + PITCHER_DOMINANCE_STATS
+    + PITCHER_CONTACT_STATS
+    + PITCHER_STUFF_STATS
+)
+PITCHER_CORE_PRIMARY_ORDER = [
+    "ERA",
+    "FIP",
+    "xFIP",
+    "SIERA",
+    "xERA",
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "K-BB%",
+    "Whiff%",
+    "CSW%",
+    "HardHit%",
+    "Barrel%",
+]
+PITCHER_DEFAULT_STATS = PITCHER_CORE_PRIMARY_ORDER.copy()
+PITCHER_SEASON_ONLY_STAT_COLS: dict[str, list[str]] = {
+    "W": ["W"],
+    "L": ["L"],
+    "IP": ["IP", "IP pitched"],
+    "ERA": ["ERA"],
+    "FIP": ["FIP"],
+    "xFIP": ["xFIP"],
+    "SIERA": ["SIERA"],
+    "xERA": ["xERA"],
+    "FB%": ["FB%"],
+    "EV": ["EV", "EVv"],
+    "LA": ["LA"],
+    "FBv": ["FBv", "FB Velo", "FBv (mph)"],
+}
+PITCHER_SEASON_ONLY_STATS = frozenset(PITCHER_SEASON_ONLY_STAT_COLS.keys())
+PITCHER_PERCENT_STATS = frozenset(
+    {"K%", "BB%", "K-BB%", "Whiff%", "CSW%", "HardHit%", "Barrel%", "GB%", "FB%", "FirstStrike%"}
+)
+PITCHER_TREND_SUPPORTED_STATS = frozenset(
+    {"wOBA", "xwOBA", "K%", "BB%", "K-BB%", "HardHit%", "Barrel%", "GB%", "CSW%", "Whiff%", "FirstStrike%"}
+)
+PITCHER_EXTRA_STATS = [stat for stat in PITCHER_STAT_ORDER if stat not in CORE_STATS]
+_DEFAULT_STATS = BATTER_DEFAULT_STATS.copy()  # stats shown by default; Reset restores this
 _PREPARED_DF_CACHE_KEY = "_prepared_df_cache"
-_PITCHER_STAT_LABELS = {"wOBA": "wOBA Allowed", "xwOBA": "xwOBA Allowed"}
+_PITCHER_STAT_LABELS = {
+    "wOBA": "wOBA Allowed",
+    "xwOBA": "xwOBA Allowed",
+    "EV": "EV Allowed",
+    "LA": "LA Allowed",
+    "FBv": "FB Velo",
+}
 _QP_SEASON = "season"
 _QP_PLAYER_TYPE = "player_type"
 _QP_PLAYER_NAME = "player_name"
@@ -120,8 +177,14 @@ _STRIKES_OPTS = ["any", "0", "1", "2"]
 _DELTA_DECIMALS = {
     "wOBA": 3,
     "xwOBA": 3,
+    "ERA": 2,
+    "FIP": 2,
+    "xFIP": 2,
+    "SIERA": 2,
+    "xERA": 2,
     "K%": 1,
     "BB%": 1,
+    "FB%": 1,
     "HardHit%": 1,
     "Barrel%": 1,
     "GB%": 1,
@@ -129,6 +192,9 @@ _DELTA_DECIMALS = {
     "Whiff%": 1,
     "FirstStrike%": 1,
     "K-BB%": 1,
+    "EV": 1,
+    "LA": 1,
+    "FBv": 1,
     "wRC+": 0,
     "AVG": 3,
     "OBP": 3,
@@ -330,6 +396,96 @@ def _as_optional_float(value: object) -> float | None:
     if pd.isna(parsed):
         return None
     return float(parsed)
+
+
+def _find_case_insensitive_column(columns: list[object], candidates: list[str]) -> str | None:
+    lowered = {str(col).strip().lower(): str(col) for col in columns}
+    for candidate in candidates:
+        key = candidate.strip().lower()
+        if key in lowered:
+            return lowered[key]
+    return None
+
+
+def _season_row_value(row: pd.Series, candidates: list[str]) -> float | None:
+    col = _find_case_insensitive_column(list(row.index), candidates)
+    if col is None:
+        return None
+    return _as_optional_float(row.get(col))
+
+
+def _normalize_pitcher_stat_value(stat: str, value: float | None) -> float | None:
+    if value is None:
+        return None
+    out = float(value)
+    if stat in PITCHER_PERCENT_STATS and abs(out) <= 1.0:
+        out *= 100.0
+    if stat in {"W", "L"}:
+        return float(int(round(out)))
+    if stat == "IP":
+        return round(out, 1)
+    if stat in {"ERA", "FIP", "xFIP", "SIERA", "xERA"}:
+        return round(out, 2)
+    if stat in {"EV", "LA", "FBv"}:
+        return round(out, 1)
+    if stat in {"wOBA", "xwOBA"}:
+        return round(out, 3)
+    return round(out, 1) if stat.endswith("%") else out
+
+
+def _extract_pitcher_season_stats(player_row: pd.Series | None) -> dict[str, float | None]:
+    keys = ["W", "L", "IP", "ERA", *PITCHER_STAT_ORDER]
+    output: dict[str, float | None] = {key: None for key in keys}
+    if player_row is None:
+        return output
+
+    # Core season-only metrics.
+    for stat, candidates in PITCHER_SEASON_ONLY_STAT_COLS.items():
+        output[stat] = _normalize_pitcher_stat_value(stat, _season_row_value(player_row, candidates))
+
+    # Optional pitcher stats that may already exist in FanGraphs season tables.
+    for stat in PITCHER_STAT_ORDER:
+        if output.get(stat) is not None:
+            continue
+        output[stat] = _normalize_pitcher_stat_value(stat, _season_row_value(player_row, [stat]))
+
+    return output
+
+
+def _pitcher_stat_available_in_season_df(stat: str, season_df: pd.DataFrame) -> bool:
+    if stat not in PITCHER_SEASON_ONLY_STATS:
+        return True
+    candidates = PITCHER_SEASON_ONLY_STAT_COLS.get(stat, [stat])
+    return _find_case_insensitive_column(list(season_df.columns), candidates) is not None
+
+
+def _build_pitcher_stats_catalog(season_df: pd.DataFrame) -> list[str]:
+    return [
+        stat for stat in PITCHER_STAT_ORDER if _pitcher_stat_available_in_season_df(stat, season_df)
+    ]
+
+
+def _merge_pitcher_season_stats(
+    base_stats: dict[str, float | int | None],
+    season_stats: dict[str, float | None],
+) -> dict[str, float | int | None]:
+    merged = dict(base_stats)
+    for stat, value in season_stats.items():
+        if stat not in merged or merged.get(stat) is None:
+            merged[stat] = value
+    return merged
+
+
+def _format_pitcher_headline_line(season_stats: dict[str, float | None]) -> str:
+    wins = season_stats.get("W")
+    losses = season_stats.get("L")
+    ip = season_stats.get("IP")
+    era = season_stats.get("ERA")
+
+    wl_part = "—" if wins is None or losses is None else f"{int(round(wins))}\u2013{int(round(losses))}"
+    ip_part = "—" if ip is None else f"{float(ip):.1f} IP"
+    era_part = "—" if era is None else f"{float(era):.2f} ERA"
+    return f"{wl_part} • {ip_part} • {era_part}"
 
 
 def _merge_batter_wrc_plus(base_df: pd.DataFrame, season: int, context: str) -> pd.DataFrame:
@@ -796,19 +952,18 @@ with st.sidebar:
 
     # ── Stats to show ─────────────────────────────────────────────────────────
     show_traditional_batting_stats = bool(st.session_state.get("show_traditional_batting_stats", False))
-    batter_stats_catalog = BATTER_EXTRA_STATS + CORE_STATS
+    batter_stats_catalog = BATTER_STAT_ORDER.copy()
     if show_traditional_batting_stats:
         batter_stats_catalog = batter_stats_catalog + TRADITIONAL_STATS
 
-    stats_catalog = (
-        PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS
-        if player_type == "Pitcher"
-        else batter_stats_catalog
-    )
+    pitcher_stats_catalog = _build_pitcher_stats_catalog(season_df)
+    pitcher_default_stats = [stat for stat in PITCHER_DEFAULT_STATS if stat in pitcher_stats_catalog]
+
+    stats_catalog = pitcher_stats_catalog if player_type == "Pitcher" else batter_stats_catalog
     stats_selection_key = "selected_stats_requested"
     if stats_selection_key not in st.session_state:
         st.session_state[stats_selection_key] = (
-            (PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS)
+            pitcher_default_stats
             if player_type == "Pitcher"
             else _DEFAULT_STATS.copy()
         )
@@ -847,7 +1002,7 @@ with st.sidebar:
             if st.button("Reset", key="stats_reset_defaults", width="stretch",
                          help="Restore default stats"):
                 default_stats = (
-                    PITCHER_CORE_STATS + PITCHER_SECONDARY_STATS
+                    pitcher_default_stats
                     if player_type == "Pitcher"
                     else _DEFAULT_STATS
                 )
@@ -1082,6 +1237,7 @@ if player_row is None:
 
 fg_id = int(player_row["IDfg"])
 team  = str(player_row.get("Team", "—"))
+pitcher_season_stats = _extract_pitcher_season_stats(player_row) if player_type == "Pitcher" else {}
 
 with st.spinner("Resolving player ID…"):
     mlbam_id = get_mlbam_id(fg_id, player_name=selected_name)
@@ -1106,6 +1262,7 @@ st.session_state["selected_player_id"] = int(mlbam_id)
 team_b = None
 mlbam_id_b = None
 player_row_b = None
+pitcher_season_stats_b: dict[str, float | None] = {}
 if comparison_mode and selected_name_b is not None:
     player_row_b = get_player_row(season_df_b_fg, selected_name_b)
     if player_row_b is None:
@@ -1127,6 +1284,8 @@ if comparison_mode and selected_name_b is not None:
 
     fg_id_b = int(player_row_b["IDfg"])
     team_b = str(player_row_b.get("Team", "—"))
+    if player_type == "Pitcher":
+        pitcher_season_stats_b = _extract_pitcher_season_stats(player_row_b)
 
     with st.spinner("Resolving Player B ID…"):
         mlbam_id_b = get_mlbam_id(fg_id_b, player_name=selected_name_b)
@@ -1216,6 +1375,9 @@ for stat in selected_stats_requested:
     if stat in {"K-BB%", "CSW%", "Whiff%", "FirstStrike%"} and player_type == "Pitcher":
         selected_stats.append(stat)
         continue
+    if stat in PITCHER_SEASON_ONLY_STATS and player_type == "Pitcher":
+        selected_stats.append(stat)
+        continue
 
     spec = STAT_REGISTRY.get(stat)
     if spec is None:
@@ -1250,6 +1412,8 @@ if player_type == "Batter":
     _raw["wRC+"] = _as_optional_float(player_row.get("wRC+"))
     for stat in TRADITIONAL_STATS:
         _raw[stat] = _as_optional_float(player_row.get(stat))
+elif player_type == "Pitcher":
+    _raw = _merge_pitcher_season_stats(_raw, pitcher_season_stats)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
 
 distributions = (
@@ -1279,6 +1443,8 @@ if comparison_mode and filtered_df_b is not None:
         _raw_b["wRC+"] = _as_optional_float(player_row_b.get("wRC+"))
         for stat in TRADITIONAL_STATS:
             _raw_b[stat] = _as_optional_float(player_row_b.get(stat))
+    elif player_type == "Pitcher":
+        _raw_b = _merge_pitcher_season_stats(_raw_b, pitcher_season_stats_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
     # When seasons differ, percentile Player B against their own year's league population.
     distributions_b = (
@@ -1315,8 +1481,26 @@ if comparison_mode and team_b is not None:
     else:
         st.subheader(f"{selected_name} vs {selected_name_b}")
         st.caption(f"{team} vs {team_b} · {season_a} · {player_type}")
+    if player_type == "Pitcher":
+        header_col_a, header_col_b = st.columns(2)
+        with header_col_a:
+            st.markdown(f"**{selected_name}**")
+            st.caption(f"{team} · {season_a} · Pitcher")
+            st.caption(_format_pitcher_headline_line(pitcher_season_stats))
+        with header_col_b:
+            st.markdown(f"**{selected_name_b}**")
+            st.caption(f"{team_b} · {season_b} · Pitcher")
+            st.caption(_format_pitcher_headline_line(pitcher_season_stats_b))
 else:
-    player_header(selected_name, team, season_a, player_type)
+    if player_type == "Pitcher":
+        st.subheader(selected_name)
+        st.caption(f"{team} · {season_a} · {player_type}")
+        st.caption(_format_pitcher_headline_line(pitcher_season_stats))
+    else:
+        player_header(selected_name, team, season_a, player_type)
+
+if player_type == "Pitcher" and active_filter_summary != "No filters (full season data)":
+    st.caption("W\u2013L / IP / ERA are season-level and are not affected by filters.")
 
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
@@ -1374,50 +1558,36 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
 else:
     st.caption(f"Sample size: {_sample_size_text(sample_sizes, player_type)}")
     if player_type == "Pitcher":
-        core_card_order = ["wOBA", "xwOBA", "K-BB%", "K%", "BB%", "CSW%"]
-        contact_order = ["HardHit%", "Barrel%", "GB%"]
-        command_order = ["Whiff%", "FirstStrike%"]
-        core_stats = [s for s in core_card_order if s in selected_stats]
-        contact_stats = [s for s in contact_order if s in selected_stats]
-        command_stats = [s for s in command_order if s in selected_stats]
+        ordered_selected_stats = [stat for stat in PITCHER_STAT_ORDER if stat in selected_stats]
+        primary_core_stats = [stat for stat in PITCHER_CORE_PRIMARY_ORDER if stat in ordered_selected_stats]
+        secondary_stats = [stat for stat in ordered_selected_stats if stat not in primary_core_stats]
 
-        if core_stats:
+        if primary_core_stats:
             st.markdown("**Core Pitching Stats**")
             stat_cards_row(
                 player_stats,
                 percentiles,
                 color_tiers,
-                stats_order=core_stats,
+                stats_order=primary_core_stats,
                 cols_per_row=3,
                 label_overrides=_PITCHER_STAT_LABELS,
             )
-            st.caption("wOBA/xwOBA allowed per BF result · K%, BB%, K-BB% per BF · CSW% per pitch")
-
-        if contact_stats:
-            st.markdown("**Contact & Batted Ball Profile**")
-            stat_cards_row(
-                player_stats,
-                percentiles,
-                color_tiers,
-                stats_order=contact_stats,
-                cols_per_row=3,
-                label_overrides=_PITCHER_STAT_LABELS,
+            st.caption(
+                "Priority: run prevention/outcomes -> dominance/control -> contact quality."
             )
-            st.caption("per batted ball event")
 
-        if command_stats:
-            st.markdown("**Pitch Command Detail**")
-            stat_cards_row(
-                player_stats,
-                percentiles,
-                color_tiers,
-                stats_order=command_stats,
-                cols_per_row=2,
-                label_overrides=_PITCHER_STAT_LABELS,
-            )
-            st.caption("Whiff% per swing · First-Strike% per 0-0 first pitch")
+        if secondary_stats:
+            with st.expander("More Pitching Metrics", expanded=False):
+                stat_cards_row(
+                    player_stats,
+                    percentiles,
+                    color_tiers,
+                    stats_order=secondary_stats,
+                    cols_per_row=3,
+                    label_overrides=_PITCHER_STAT_LABELS,
+                )
 
-        if not (core_stats or contact_stats or command_stats):
+        if not (primary_core_stats or secondary_stats):
             st.info("No stats selected.")
     else:
         stat_cards_row(player_stats, percentiles, color_tiers, stats_order=selected_stats)
@@ -1606,7 +1776,12 @@ with st.expander("Player Trend by Year", expanded=False):
     trend_seasons_b = sorted(s for s in STATCAST_SEASONS if s <= season_b)
     trend_control_max = max(season_a, season_b) if comparison_mode else season_a
     trend_seasons_control = sorted(s for s in STATCAST_SEASONS if s <= trend_control_max)
-    available_trend_stats = selected_stats if selected_stats else list(STAT_REGISTRY.keys())
+    if player_type == "Pitcher":
+        available_trend_stats = [stat for stat in selected_stats if stat in PITCHER_TREND_SUPPORTED_STATS]
+    else:
+        available_trend_stats = selected_stats.copy()
+    if not available_trend_stats:
+        available_trend_stats = list(STAT_REGISTRY.keys())
 
     trend_year_min = trend_seasons_control[0]
     trend_year_max = trend_seasons_control[-1]

@@ -24,8 +24,14 @@ from stats.splits import STAT_REGISTRY
 _STAT_FORMAT: dict[str, tuple[str, str]] = {
     "wOBA": (".3f", ""),
     "xwOBA": (".3f", ""),
+    "ERA": (".2f", ""),
+    "FIP": (".2f", ""),
+    "xFIP": (".2f", ""),
+    "SIERA": (".2f", ""),
+    "xERA": (".2f", ""),
     "K%": (".1f", "%"),
     "BB%": (".1f", "%"),
+    "FB%": (".1f", "%"),
     "HardHit%": (".1f", "%"),
     "Barrel%": (".1f", "%"),
     "wRC+": (".0f", ""),
@@ -38,6 +44,9 @@ _STAT_FORMAT: dict[str, tuple[str, str]] = {
     "Whiff%": (".1f", "%"),
     "FirstStrike%": (".1f", "%"),
     "K-BB%": (".1f", "%"),
+    "EV": (".1f", ""),
+    "LA": (".1f", ""),
+    "FBv": (".1f", ""),
 }
 
 # Human-readable labels for split table column headers
@@ -181,8 +190,8 @@ def format_stat_value(stat: str, value: float | None) -> str:
         return "—"
     fmt, suffix = _STAT_FORMAT.get(stat, (".3f", ""))
     result = f"{value:{fmt}}{suffix}"
-    # Strip leading zero for proportion-scale stats (wOBA, xwOBA)
-    if suffix == "" and result.startswith("0."):
+    # Strip leading zero only for Savant-style proportion stats.
+    if stat in {"wOBA", "xwOBA"} and result.startswith("0."):
         result = result[1:]
     return result
 

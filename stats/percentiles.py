@@ -22,7 +22,19 @@ import pandas as pd
 # Stats where a LOWER value is better (percentile is inverted)
 LOWER_IS_BETTER: frozenset[str] = frozenset(["K%"])
 PITCHER_LOWER_IS_BETTER: frozenset[str] = frozenset(
-    ["wOBA", "xwOBA", "BB%", "HardHit%", "Barrel%"]
+    [
+        "ERA",
+        "FIP",
+        "xFIP",
+        "SIERA",
+        "xERA",
+        "wOBA",
+        "xwOBA",
+        "BB%",
+        "HardHit%",
+        "Barrel%",
+        "EV",
+    ]
 )
 
 # FanGraphs stores these as proportions (0–1); splits.py outputs them as
@@ -33,10 +45,26 @@ PROPORTION_STATS: frozenset[str] = frozenset(["K%", "BB%", "HardHit%", "Barrel%"
 CORE_STATS: list[str] = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 
 PITCHER_PROPORTION_STATS: frozenset[str] = frozenset(
-    {"K%", "BB%", "K-BB%", "GB%", "HardHit%", "Barrel%", "CSW%", "FirstStrike%"}
+    {
+        "K%",
+        "BB%",
+        "K-BB%",
+        "GB%",
+        "FB%",
+        "HardHit%",
+        "Barrel%",
+        "CSW%",
+        "Whiff%",
+        "FirstStrike%",
+    }
 )
 FG_PITCHER_COLUMN_MAP: dict[str, str] = {"F-Strike%": "FirstStrike%"}
 PITCHER_DISTRIBUTION_STATS: list[str] = [
+    "ERA",
+    "FIP",
+    "xFIP",
+    "SIERA",
+    "xERA",
     "wOBA",
     "xwOBA",
     "K%",
@@ -45,7 +73,12 @@ PITCHER_DISTRIBUTION_STATS: list[str] = [
     "HardHit%",
     "Barrel%",
     "GB%",
+    "FB%",
+    "EV",
+    "LA",
+    "FBv",
     "CSW%",
+    "Whiff%",
     "FirstStrike%",
 ]
 PITCHER_MIN_DISTRIBUTION_SAMPLE: int = 10
@@ -59,6 +92,18 @@ COLOR_TIERS: list[tuple[float, str, str]] = [
     (30.0, "blue", "#2980B9"),
     (0.0, "gray", "#95A5A6"),
 ]
+
+
+def _scale_percent_if_fraction(values: np.ndarray) -> np.ndarray:
+    """Convert 0-1 proportion arrays to 0-100 only when needed."""
+    if len(values) == 0:
+        return values
+    finite = values[~np.isnan(values)]
+    if len(finite) == 0:
+        return values
+    if finite.max() <= 1.5 and finite.min() >= 0.0:
+        return values * 100.0
+    return values
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +123,7 @@ def build_league_distributions(season_df: pd.DataFrame) -> dict[str, np.ndarray]
             continue
         values = season_df[stat].dropna().to_numpy(dtype=float)
         if stat in PROPORTION_STATS:
-            values = values * 100.0
+            values = _scale_percent_if_fraction(values)
         distributions[stat] = values
     return distributions
 
@@ -100,7 +145,7 @@ def build_pitcher_league_distributions(
             continue
 
         if internal_stat in PITCHER_PROPORTION_STATS:
-            values = values * 100.0
+            values = _scale_percent_if_fraction(values)
 
         distributions[internal_stat] = values
 

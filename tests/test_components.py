@@ -87,9 +87,11 @@ class TestFormatStatValue:
     def test_nan_returns_dash(self):
         assert format_stat_value("K%", float("nan")) == "—"
 
-    def test_unknown_stat_falls_back_to_three_decimals(self):
-        result = format_stat_value("FIP", 3.21)
-        assert "3.210" in result
+    def test_fip_uses_two_decimal_format(self):
+        assert format_stat_value("FIP", 3.21) == "3.21"
+
+    def test_only_woba_style_stats_strip_leading_zero(self):
+        assert format_stat_value("ERA", 0.98) == "0.98"
 
 
 # ---------------------------------------------------------------------------
