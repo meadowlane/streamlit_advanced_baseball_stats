@@ -38,6 +38,7 @@ import pandas as pd
 # FilterSpec registry
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FilterSpec:
     """Metadata for a single filter type used by the dynamic filter builder.
@@ -102,13 +103,22 @@ FILTER_REGISTRY: dict[str, FilterSpec] = {
     ),
 }
 
-_MONTH_TO_LABEL = {4: "Apr", 5: "May", 6: "Jun", 7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct"}
+_MONTH_TO_LABEL = {
+    4: "Apr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Aug",
+    9: "Sep",
+    10: "Oct",
+}
 _MONTH_COL = "_month"
 
 
 # ---------------------------------------------------------------------------
 # SplitFilters
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SplitFilters:
@@ -141,19 +151,20 @@ class SplitFilters:
         Keep only pitches where the strike count equals this value (0–2).
     """
 
-    inning_min:   int | None = None
-    inning_max:   int | None = None
+    inning_min: int | None = None
+    inning_max: int | None = None
     pitcher_hand: Literal["L", "R"] | None = None
-    batter_hand:  Literal["L", "R"] | None = None
-    home_away:    Literal["home", "away"] | None = None
-    month:        int | None = None
-    balls:        int | None = None
-    strikes:      int | None = None
+    batter_hand: Literal["L", "R"] | None = None
+    home_away: Literal["home", "away"] | None = None
+    month: int | None = None
+    balls: int | None = None
+    strikes: int | None = None
 
 
 # ---------------------------------------------------------------------------
 # rows_to_split_filters
 # ---------------------------------------------------------------------------
+
 
 def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
     """Translate a session-state filter-row list into a SplitFilters instance.
@@ -185,7 +196,7 @@ def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
         ft = row.get("filter_type")
         if ft is None:
             continue  # skip malformed rows missing the required key
-        p  = row.get("params", {})
+        p = row.get("params", {})
 
         if ft == "inning":
             kwargs["inning_min"] = p.get("min")
@@ -201,7 +212,7 @@ def rows_to_split_filters(rows: list[dict]) -> SplitFilters:
         elif ft == "count":
             # Always assign both fields so a later row that resets balls or
             # strikes to None correctly overrides an earlier row's value.
-            kwargs["balls"]   = p.get("balls")
+            kwargs["balls"] = p.get("balls")
             kwargs["strikes"] = p.get("strikes")
         # Unknown filter types are silently ignored.
 
@@ -255,6 +266,8 @@ def summarize_filter_rows(rows: list[dict]) -> str:
     parts: list[str] = []
     for row in rows:
         ft = row.get("filter_type")
+        if not isinstance(ft, str):
+            continue
         spec = FILTER_REGISTRY.get(ft)
         if spec is None:
             continue
@@ -273,7 +286,9 @@ def summarize_filter_rows(rows: list[dict]) -> str:
             hand = p.get("hand", spec.default_params.get("hand", "R"))
             parts.append(f"{label}: {hand}")
         elif ft == "home_away":
-            side = str(p.get("side", spec.default_params.get("side", "home"))).capitalize()
+            side = str(
+                p.get("side", spec.default_params.get("side", "home"))
+            ).capitalize()
             parts.append(f"{label}: {side}")
         elif ft == "month":
             month_int = p.get("month", spec.default_params.get("month", 4))
@@ -299,6 +314,7 @@ def summarize_filter_rows(rows: list[dict]) -> str:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _col_ok(df: pd.DataFrame, col: str, filter_name: str) -> bool:
     """Return True if *col* is present in *df*.
 
@@ -321,8 +337,10 @@ def _col_ok(df: pd.DataFrame, col: str, filter_name: str) -> bool:
     )
     try:
         import streamlit.runtime  # noqa: PLC0415
+
         if streamlit.runtime.exists():
             import streamlit as st  # noqa: PLC0415
+
             st.warning(msg)
             return False
     except Exception:
@@ -333,6 +351,7 @@ def _col_ok(df: pd.DataFrame, col: str, filter_name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Filter application
 # ---------------------------------------------------------------------------
+
 
 def apply_filters(
     df: pd.DataFrame,
@@ -367,16 +386,18 @@ def apply_filters(
         is shown and that individual filter is skipped.
     """
     # Fast path — avoid any allocation when nothing is active.
-    if not any([
-        filters.inning_min   is not None,
-        filters.inning_max   is not None,
-        filters.pitcher_hand is not None,
-        filters.batter_hand  is not None,
-        filters.home_away    is not None,
-        filters.month        is not None,
-        filters.balls        is not None,
-        filters.strikes      is not None,
-    ]):
+    if not any(
+        [
+            filters.inning_min is not None,
+            filters.inning_max is not None,
+            filters.pitcher_hand is not None,
+            filters.batter_hand is not None,
+            filters.home_away is not None,
+            filters.month is not None,
+            filters.balls is not None,
+            filters.strikes is not None,
+        ]
+    ):
         return df
 
     # --- inning ----------------------------------------------------------
@@ -411,7 +432,10 @@ def apply_filters(
         if _MONTH_COL in df.columns:
             df = df[df[_MONTH_COL] == filters.month]
         elif _col_ok(df, "game_date", "month"):
-            df = df[pd.to_datetime(df["game_date"], errors="coerce").dt.month == filters.month]
+            df = df[
+                pd.to_datetime(df["game_date"], errors="coerce").dt.month
+                == filters.month
+            ]
 
     # --- count: balls ----------------------------------------------------
     if filters.balls is not None:

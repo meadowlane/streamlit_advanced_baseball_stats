@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
+import plotly.graph_objects as go  # type: ignore[import-untyped]
 import streamlit as st
+from streamlit.elements.lib.column_types import ColumnConfig
 
-from stats.percentiles import CORE_STATS, LOWER_IS_BETTER
+from stats.percentiles import LOWER_IS_BETTER
 from stats.splits import STAT_REGISTRY
 
 # ---------------------------------------------------------------------------
@@ -21,22 +22,22 @@ from stats.splits import STAT_REGISTRY
 
 # Display format per stat: (format_string, suffix)
 _STAT_FORMAT: dict[str, tuple[str, str]] = {
-    "wOBA":      (".3f", ""),
-    "xwOBA":     (".3f", ""),
-    "K%":        (".1f", "%"),
-    "BB%":       (".1f", "%"),
-    "HardHit%":  (".1f", "%"),
-    "Barrel%":   (".1f", "%"),
-    "wRC+":      (".0f", ""),
-    "AVG":       (".3f", ""),
-    "OBP":       (".3f", ""),
-    "SLG":       (".3f", ""),
-    "OPS":       (".3f", ""),
-    "GB%":       (".1f", "%"),
-    "CSW%":      (".1f", "%"),
-    "Whiff%":    (".1f", "%"),
+    "wOBA": (".3f", ""),
+    "xwOBA": (".3f", ""),
+    "K%": (".1f", "%"),
+    "BB%": (".1f", "%"),
+    "HardHit%": (".1f", "%"),
+    "Barrel%": (".1f", "%"),
+    "wRC+": (".0f", ""),
+    "AVG": (".3f", ""),
+    "OBP": (".3f", ""),
+    "SLG": (".3f", ""),
+    "OPS": (".3f", ""),
+    "GB%": (".1f", "%"),
+    "CSW%": (".1f", "%"),
+    "Whiff%": (".1f", "%"),
     "FirstStrike%": (".1f", "%"),
-    "K-BB%":     (".1f", "%"),
+    "K-BB%": (".1f", "%"),
 }
 
 # Human-readable labels for split table column headers
@@ -57,21 +58,53 @@ _SPLIT_TABLE_HELP: dict[str, str] = {
     "GB%": "Ground-ball rate on balls in play. Often better higher for pitchers; context-dependent for hitters.",
 }
 
-_SPLIT_TABLE_FORMAT: dict[str, st.column_config.Column] = {
-    "PA":        st.column_config.NumberColumn("PA",       format="%d", help=_SPLIT_TABLE_HELP.get("PA", None)),
-    "wOBA":      st.column_config.NumberColumn("wOBA",     format="%.3f", help=_SPLIT_TABLE_HELP.get("wOBA", None)),
-    "wOBA Allowed": st.column_config.NumberColumn("wOBA Allowed", format="%.3f", help=_SPLIT_TABLE_HELP.get("wOBA Allowed", None)),
-    "xwOBA":     st.column_config.NumberColumn("xwOBA",    format="%.3f", help=_SPLIT_TABLE_HELP.get("xwOBA", None)),
-    "xwOBA Allowed": st.column_config.NumberColumn("xwOBA Allowed", format="%.3f", help=_SPLIT_TABLE_HELP.get("xwOBA Allowed", None)),
-    "K%":        st.column_config.NumberColumn("K%",       format="%.1f%%", help=_SPLIT_TABLE_HELP.get("K%", None)),
-    "BB%":       st.column_config.NumberColumn("BB%",      format="%.1f%%", help=_SPLIT_TABLE_HELP.get("BB%", None)),
-    "HardHit%":  st.column_config.NumberColumn("HardHit%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("HardHit%", None)),
-    "Barrel%":   st.column_config.NumberColumn("Barrel%",  format="%.1f%%", help=_SPLIT_TABLE_HELP.get("Barrel%", None)),
-    "GB%":       st.column_config.NumberColumn("GB%",      format="%.1f%%", help=_SPLIT_TABLE_HELP.get("GB%", None)),
-    "K-BB%":     st.column_config.NumberColumn("K-BB%",    format="%.1f%%", help=_SPLIT_TABLE_HELP.get("K-BB%", None)),
-    "CSW%":      st.column_config.NumberColumn("CSW%",     format="%.1f%%", help=_SPLIT_TABLE_HELP.get("CSW%", None)),
-    "Whiff%":    st.column_config.NumberColumn("Whiff%",   format="%.1f%%", help=_SPLIT_TABLE_HELP.get("Whiff%", None)),
-    "FirstStrike%": st.column_config.NumberColumn("FirstStrike%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("FirstStrike%", None)),
+_SPLIT_TABLE_FORMAT: dict[str, ColumnConfig | str | None] = {
+    "PA": st.column_config.NumberColumn(
+        "PA", format="%d", help=_SPLIT_TABLE_HELP.get("PA", None)
+    ),
+    "wOBA": st.column_config.NumberColumn(
+        "wOBA", format="%.3f", help=_SPLIT_TABLE_HELP.get("wOBA", None)
+    ),
+    "wOBA Allowed": st.column_config.NumberColumn(
+        "wOBA Allowed", format="%.3f", help=_SPLIT_TABLE_HELP.get("wOBA Allowed", None)
+    ),
+    "xwOBA": st.column_config.NumberColumn(
+        "xwOBA", format="%.3f", help=_SPLIT_TABLE_HELP.get("xwOBA", None)
+    ),
+    "xwOBA Allowed": st.column_config.NumberColumn(
+        "xwOBA Allowed",
+        format="%.3f",
+        help=_SPLIT_TABLE_HELP.get("xwOBA Allowed", None),
+    ),
+    "K%": st.column_config.NumberColumn(
+        "K%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("K%", None)
+    ),
+    "BB%": st.column_config.NumberColumn(
+        "BB%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("BB%", None)
+    ),
+    "HardHit%": st.column_config.NumberColumn(
+        "HardHit%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("HardHit%", None)
+    ),
+    "Barrel%": st.column_config.NumberColumn(
+        "Barrel%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("Barrel%", None)
+    ),
+    "GB%": st.column_config.NumberColumn(
+        "GB%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("GB%", None)
+    ),
+    "K-BB%": st.column_config.NumberColumn(
+        "K-BB%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("K-BB%", None)
+    ),
+    "CSW%": st.column_config.NumberColumn(
+        "CSW%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("CSW%", None)
+    ),
+    "Whiff%": st.column_config.NumberColumn(
+        "Whiff%", format="%.1f%%", help=_SPLIT_TABLE_HELP.get("Whiff%", None)
+    ),
+    "FirstStrike%": st.column_config.NumberColumn(
+        "FirstStrike%",
+        format="%.1f%%",
+        help=_SPLIT_TABLE_HELP.get("FirstStrike%", None),
+    ),
 }
 
 _ARSENAL_TABLE_HELP: dict[str, str] = {
@@ -122,7 +155,15 @@ _OUTCOME_SYMBOLS: dict[str, str] = {
     "HBP": "star",
     "Other": "diamond",
 }
-_OUTCOME_ORDER = ["Ball", "Called Strike", "Swinging Strike", "Foul", "In Play", "HBP", "Other"]
+_OUTCOME_ORDER = [
+    "Ball",
+    "Called Strike",
+    "Swinging Strike",
+    "Foul",
+    "In Play",
+    "HBP",
+    "Other",
+]
 _OUTCOME_LEGEND_HTML = (
     '<p style="font-size:12px;color:rgba(255,255,255,0.60);margin:2px 0 6px 0;">'
     "○ Ball &nbsp;·&nbsp; ● Called Strike &nbsp;·&nbsp; ✕ Swinging Strike"
@@ -282,7 +323,7 @@ def stat_cards_row(
     row_width = max(1, int(cols_per_row))
     label_map = label_overrides or {}
     for start in range(0, len(order), row_width):
-        row_stats = order[start:start + row_width]
+        row_stats = order[start : start + row_width]
         cols = st.columns(row_width)
         for idx in range(row_width):
             with cols[idx]:
@@ -302,6 +343,7 @@ def stat_cards_row(
 # ---------------------------------------------------------------------------
 # Percentile bar chart
 # ---------------------------------------------------------------------------
+
 
 def percentile_bar_chart(
     percentiles: dict[str, float],
@@ -351,7 +393,9 @@ def percentile_bar_chart(
     )
 
     # League-average reference line at 50th
-    fig.add_vline(x=50, line_dash="dot", line_color="rgba(128,128,128,0.5)", line_width=1)
+    fig.add_vline(
+        x=50, line_dash="dot", line_color="rgba(128,128,128,0.5)", line_width=1
+    )
 
     st.plotly_chart(
         fig,
@@ -364,6 +408,7 @@ def percentile_bar_chart(
 # Split DataTable
 # ---------------------------------------------------------------------------
 
+
 def split_table(df: pd.DataFrame) -> None:
     """Render the split results DataFrame with formatted columns."""
     if df.empty:
@@ -372,9 +417,7 @@ def split_table(df: pd.DataFrame) -> None:
 
     # Build column_config only for columns that are present
     col_config = {
-        col: cfg
-        for col, cfg in _SPLIT_TABLE_FORMAT.items()
-        if col in df.columns
+        col: cfg for col, cfg in _SPLIT_TABLE_FORMAT.items() if col in df.columns
     }
 
     st.dataframe(
@@ -399,13 +442,31 @@ def render_pitch_arsenal(arsenal_df: pd.DataFrame) -> None:
             width="stretch",
             hide_index=True,
             column_config={
-                "Pitch": st.column_config.TextColumn("Pitch", help=_ARSENAL_TABLE_HELP.get("Pitch", None)),
-                "N": st.column_config.NumberColumn("N", format="%d", help=_ARSENAL_TABLE_HELP.get("N", None)),
-                "Usage%": st.column_config.NumberColumn("Usage%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("Usage%", None)),
-                "Velo": st.column_config.NumberColumn("Velo", format="%.1f", help=_ARSENAL_TABLE_HELP.get("Velo", None)),
-                "Spin": st.column_config.NumberColumn("Spin", format="%d", help=_ARSENAL_TABLE_HELP.get("Spin", None)),
-                "CSW%": st.column_config.NumberColumn("CSW%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("CSW%", None)),
-                "Whiff%": st.column_config.NumberColumn("Whiff%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("Whiff%", None)),
+                "Pitch": st.column_config.TextColumn(
+                    "Pitch", help=_ARSENAL_TABLE_HELP.get("Pitch", None)
+                ),
+                "N": st.column_config.NumberColumn(
+                    "N", format="%d", help=_ARSENAL_TABLE_HELP.get("N", None)
+                ),
+                "Usage%": st.column_config.NumberColumn(
+                    "Usage%",
+                    format="%.1f%%",
+                    help=_ARSENAL_TABLE_HELP.get("Usage%", None),
+                ),
+                "Velo": st.column_config.NumberColumn(
+                    "Velo", format="%.1f", help=_ARSENAL_TABLE_HELP.get("Velo", None)
+                ),
+                "Spin": st.column_config.NumberColumn(
+                    "Spin", format="%d", help=_ARSENAL_TABLE_HELP.get("Spin", None)
+                ),
+                "CSW%": st.column_config.NumberColumn(
+                    "CSW%", format="%.1f%%", help=_ARSENAL_TABLE_HELP.get("CSW%", None)
+                ),
+                "Whiff%": st.column_config.NumberColumn(
+                    "Whiff%",
+                    format="%.1f%%",
+                    help=_ARSENAL_TABLE_HELP.get("Whiff%", None),
+                ),
             },
         )
 
@@ -413,6 +474,7 @@ def render_pitch_arsenal(arsenal_df: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 # Pitch zone chart
 # ---------------------------------------------------------------------------
+
 
 def _zone_bounds(df: pd.DataFrame) -> tuple[float, float, float, float]:
     """Return strike-zone bounds as (x_min, x_max, z_bot, z_top)."""
@@ -489,7 +551,11 @@ def _compute_zone_histogram(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute 2D histogram for plate_x/plate_z within the strike-zone bounds."""
     if df.empty:
-        return np.zeros((bins, bins)), np.linspace(x_min, x_max, bins + 1), np.linspace(z_bot, z_top, bins + 1)
+        return (
+            np.zeros((bins, bins)),
+            np.linspace(x_min, x_max, bins + 1),
+            np.linspace(z_bot, z_top, bins + 1),
+        )
 
     in_bounds = df[
         (df["plate_x"] >= x_min)
@@ -498,7 +564,11 @@ def _compute_zone_histogram(
         & (df["plate_z"] <= z_top)
     ].copy()
     if in_bounds.empty:
-        return np.zeros((bins, bins)), np.linspace(x_min, x_max, bins + 1), np.linspace(z_bot, z_top, bins + 1)
+        return (
+            np.zeros((bins, bins)),
+            np.linspace(x_min, x_max, bins + 1),
+            np.linspace(z_bot, z_top, bins + 1),
+        )
 
     hist, x_edges, z_edges = np.histogram2d(
         in_bounds["plate_x"].to_numpy(),
@@ -531,7 +601,9 @@ def _stable_downsample(df: pd.DataFrame, n: int) -> pd.DataFrame:
             break
 
     if chosen_cols is not None:
-        ordered = df.sort_values(by=chosen_cols, ascending=True, kind="mergesort").copy()
+        ordered = df.sort_values(
+            by=chosen_cols, ascending=True, kind="mergesort"
+        ).copy()
     else:
         ordered = df.sort_index().copy()
 
@@ -630,7 +702,9 @@ def _build_zone_chart(
     if pitch_types is not None:
         if "pitch_type" not in work.columns:
             return go.Figure()
-        work = work[work["pitch_type"].astype(str).isin([str(p) for p in pitch_types])].copy()
+        work = work[
+            work["pitch_type"].astype(str).isin([str(p) for p in pitch_types])
+        ].copy()
 
     if "pitch_type" in work.columns:
         work["pitch_type"] = work["pitch_type"].fillna("UNK").astype(str)
@@ -687,7 +761,9 @@ def _build_zone_chart(
         if pitch_df.empty:
             continue
 
-        pitch_color = _PITCH_TYPE_COLORS.get(pitch_type, fallback_map.get(pitch_type, "#9aa0a6"))
+        pitch_color = _PITCH_TYPE_COLORS.get(
+            pitch_type, fallback_map.get(pitch_type, "#9aa0a6")
+        )
         if encode_outcomes:
             fig.add_trace(
                 go.Scattergl(
@@ -717,12 +793,18 @@ def _build_zone_chart(
         ]
         custom_idx = 2
 
-        custom_cols.append(pitch_df["bs_bucket"].fillna("Unknown").astype(str).to_numpy())
-        custom_cols.append(pitch_df["outcome_bucket"].fillna("Other").astype(str).to_numpy())
+        custom_cols.append(
+            pitch_df["bs_bucket"].fillna("Unknown").astype(str).to_numpy()
+        )
+        custom_cols.append(
+            pitch_df["outcome_bucket"].fillna("Other").astype(str).to_numpy()
+        )
 
         if "release_speed" in pitch_df.columns:
             velo = pd.to_numeric(pitch_df["release_speed"], errors="coerce")
-            custom_cols.append(np.where(velo.notna(), np.round(velo, 1).astype(str), "—"))
+            custom_cols.append(
+                np.where(velo.notna(), np.round(velo, 1).astype(str), "—")
+            )
             hover_lines.append(f"Velo: %{{customdata[{custom_idx}]}} mph")
             custom_idx += 1
 
@@ -743,7 +825,9 @@ def _build_zone_chart(
             strikes = pd.to_numeric(pitch_df["strikes"], errors="coerce")
             count_vals = np.where(
                 balls.notna() & strikes.notna(),
-                balls.astype("Int64").astype(str) + "-" + strikes.astype("Int64").astype(str),
+                balls.astype("Int64").astype(str)
+                + "-"
+                + strikes.astype("Int64").astype(str),
                 "—",
             )
             custom_cols.append(count_vals)
@@ -755,7 +839,11 @@ def _build_zone_chart(
             if encode_outcomes
             else "circle"
         )
-        if __debug__ and encode_outcomes and (pitch_df["outcome_bucket"] == "Ball").any():
+        if (
+            __debug__
+            and encode_outcomes
+            and (pitch_df["outcome_bucket"] == "Ball").any()
+        ):
             assert "circle-open" in marker_symbols
         fig.add_trace(
             go.Scattergl(
@@ -777,7 +865,9 @@ def _build_zone_chart(
             )
         )
 
-    _add_zone_shapes(fig, x_min, x_max, z_bot, z_top, grid=grid, draw_grid=bool(show_grid_overlay))
+    _add_zone_shapes(
+        fig, x_min, x_max, z_bot, z_top, grid=grid, draw_grid=bool(show_grid_overlay)
+    )
 
     if view_mode == "Zoom to zone":
         x_range = [x_min - 0.6, x_max + 0.6]
@@ -787,8 +877,14 @@ def _build_zone_chart(
         x_data_max = float(work["plate_x"].max())
         y_data_min = float(work["plate_z"].min())
         y_data_max = float(work["plate_z"].max())
-        x_range = [min(x_data_min - 0.3, x_min - 0.25), max(x_data_max + 0.3, x_max + 0.25)]
-        y_range = [min(y_data_min - 0.3, z_bot - 0.3), max(y_data_max + 0.3, z_top + 0.3)]
+        x_range = [
+            min(x_data_min - 0.3, x_min - 0.25),
+            max(x_data_max + 0.3, x_max + 0.25),
+        ]
+        y_range = [
+            min(y_data_min - 0.3, z_bot - 0.3),
+            max(y_data_max + 0.3, z_top + 0.3),
+        ]
 
     fig.update_layout(
         template="plotly_dark",
@@ -844,7 +940,9 @@ def render_pitch_movement_chart(
 
     work = df.copy()
     if pitch_types is not None and "pitch_type" in work.columns:
-        work = work[work["pitch_type"].astype(str).isin([str(p) for p in pitch_types])].copy()
+        work = work[
+            work["pitch_type"].astype(str).isin([str(p) for p in pitch_types])
+        ].copy()
 
     work["pfx_x"] = pd.to_numeric(work["pfx_x"], errors="coerce")
     work["pfx_z"] = pd.to_numeric(work["pfx_z"], errors="coerce")
@@ -905,12 +1003,18 @@ def render_pitch_movement_chart(
         ]
         custom_idx = 2
 
-        custom_cols.append(trace_df["bs_bucket"].fillna("Unknown").astype(str).to_numpy())
-        custom_cols.append(trace_df["outcome_bucket"].fillna("Other").astype(str).to_numpy())
+        custom_cols.append(
+            trace_df["bs_bucket"].fillna("Unknown").astype(str).to_numpy()
+        )
+        custom_cols.append(
+            trace_df["outcome_bucket"].fillna("Other").astype(str).to_numpy()
+        )
 
         if "release_speed" in trace_df.columns:
             velo = pd.to_numeric(trace_df["release_speed"], errors="coerce")
-            custom_cols.append(np.where(velo.notna(), np.round(velo, 1).astype(str), "—"))
+            custom_cols.append(
+                np.where(velo.notna(), np.round(velo, 1).astype(str), "—")
+            )
             hover_lines.append(f"Velo: %{{customdata[{custom_idx}]}} mph")
             custom_idx += 1
 
@@ -935,7 +1039,9 @@ def render_pitch_movement_chart(
                 marker=dict(
                     size=7,
                     symbol="circle",
-                    color=_PITCH_TYPE_COLORS.get(pitch_type, fallback_map.get(pitch_type, "#9aa0a6")),
+                    color=_PITCH_TYPE_COLORS.get(
+                        pitch_type, fallback_map.get(pitch_type, "#9aa0a6")
+                    ),
                     opacity=0.75,
                 ),
                 customdata=customdata,
@@ -1033,7 +1139,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
         viz_df = df.copy()
         has_stand = "stand" in df.columns
         if "pitch_type" in viz_df.columns:
-            pitch_type_options = sorted(viz_df["pitch_type"].dropna().astype(str).unique().tolist())
+            pitch_type_options = sorted(
+                viz_df["pitch_type"].dropna().astype(str).unique().tolist()
+            )
         else:
             pitch_type_options = []
 
@@ -1069,7 +1177,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
             implied = PITCH_PRESETS.get(pitch_preset)
             if implied is not None:
                 st.session_state["pitch_zone_pitch_types_advanced"] = [
-                    pitch_type for pitch_type in implied if pitch_type in pitch_type_options
+                    pitch_type
+                    for pitch_type in implied
+                    if pitch_type in pitch_type_options
                 ]
 
         with st.expander("Options", expanded=False):
@@ -1119,7 +1229,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
                 horizontal=True,
                 key="pitch_loc_zone_view",
             )
-            show_heatmap = st.checkbox("Show heatmap", value=False, key="pitch_zone_show_heatmap")
+            show_heatmap = st.checkbox(
+                "Show heatmap", value=False, key="pitch_zone_show_heatmap"
+            )
             normalize_heatmap = st.checkbox(
                 "Normalize to %",
                 value=False,
@@ -1165,7 +1277,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
             prev_perspective = st.session_state.get("_pitch_movement_prev_perspective")
             if prev_perspective != movement_perspective:
                 st.session_state["pitch_movement_vertical_axis"] = default_vertical_mode
-                st.session_state["_pitch_movement_prev_perspective"] = movement_perspective
+                st.session_state["_pitch_movement_prev_perspective"] = (
+                    movement_perspective
+                )
 
             vertical_axis_mode = st.radio(
                 "Vertical axis",
@@ -1173,7 +1287,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
                 horizontal=True,
                 key="pitch_movement_vertical_axis",
             )
-            has_throws = "p_throws" in viz_df.columns and viz_df["p_throws"].notna().any()
+            has_throws = (
+                "p_throws" in viz_df.columns and viz_df["p_throws"].notna().any()
+            )
             if has_throws:
                 mirror_lhp = st.checkbox(
                     "Mirror LHP to RHP view (arm-side consistent)",
@@ -1189,7 +1305,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
             else:
                 st.session_state["pitch_zone_pitch_types_advanced"] = [
                     pitch_type
-                    for pitch_type in st.session_state["pitch_zone_pitch_types_advanced"]
+                    for pitch_type in st.session_state[
+                        "pitch_zone_pitch_types_advanced"
+                    ]
                     if pitch_type in pitch_type_options
                 ]
             selected_pitch_types = st.multiselect(
@@ -1225,15 +1343,21 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
         )
         if advanced_override:
             filtered_df = filtered_df[
-                filtered_df["pitch_type"].astype(str).isin([str(p) for p in selected_pitch_types])
+                filtered_df["pitch_type"]
+                .astype(str)
+                .isin([str(p) for p in selected_pitch_types])
             ].copy()
         else:
             preset_types = PITCH_PRESETS[pitch_preset]
             if preset_types is not None and "pitch_type" in filtered_df.columns:
-                available_types = set(filtered_df["pitch_type"].dropna().astype(str).unique().tolist())
+                available_types = set(
+                    filtered_df["pitch_type"].dropna().astype(str).unique().tolist()
+                )
                 preset_match = sorted(available_types.intersection(set(preset_types)))
                 if preset_match:
-                    filtered_df = filtered_df[filtered_df["pitch_type"].astype(str).isin(preset_match)].copy()
+                    filtered_df = filtered_df[
+                        filtered_df["pitch_type"].astype(str).isin(preset_match)
+                    ].copy()
 
         tab_zone, tab_movement = st.tabs(["Zone Map", "Movement"])
         with tab_zone:
@@ -1241,7 +1365,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
                 st.markdown(_OUTCOME_LEGEND_HTML, unsafe_allow_html=True)
 
             if show_heatmap and max_pitches < 300:
-                st.caption("ℹ Heatmap is most meaningful with ≥ 300 pitches. Increase Max pitches in Options.")
+                st.caption(
+                    "ℹ Heatmap is most meaningful with ≥ 300 pitches. Increase Max pitches in Options."
+                )
 
             if "plate_x" not in df.columns or "plate_z" not in df.columns:
                 st.info("Pitch location columns are unavailable for this selection.")
@@ -1256,7 +1382,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
                         grid=grid,
                         pitch_types=None,
                         encode_outcomes=encode_outcomes,
-                        selected_outcomes=selected_outcomes if encode_outcomes else None,
+                        selected_outcomes=selected_outcomes
+                        if encode_outcomes
+                        else None,
                         show_heatmap=show_heatmap,
                         heatmap_bins=heatmap_bins,
                         heatmap_normalize=normalize_heatmap,
@@ -1264,7 +1392,9 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
                         show_grid_overlay=show_grid_overlay,
                         view_mode=view_mode,
                     )
-                    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+                    st.plotly_chart(
+                        fig, width="stretch", config={"displayModeBar": False}
+                    )
 
         with tab_movement:
             render_pitch_movement_chart(
@@ -1302,7 +1432,10 @@ _TREND_MARKER_SYMBOLS = {
     "GB%": "pentagon",
 }
 
-def _build_trend_tidy_df(trend_data: list[dict], stats_order: list[str]) -> pd.DataFrame:
+
+def _build_trend_tidy_df(
+    trend_data: list[dict], stats_order: list[str]
+) -> pd.DataFrame:
     rows: list[dict] = []
     for season_row in trend_data:
         year = season_row.get("season", season_row.get("year"))
@@ -1311,7 +1444,9 @@ def _build_trend_tidy_df(trend_data: list[dict], stats_order: list[str]) -> pd.D
 
         n_pitches = season_row.get("n_pitches", season_row.get("N_pitches"))
         n_bip = season_row.get("n_bip", season_row.get("N_BIP"))
-        approx_pa = season_row.get("approx_pa", season_row.get("approx_PA", season_row.get("PA")))
+        approx_pa = season_row.get(
+            "approx_pa", season_row.get("approx_PA", season_row.get("PA"))
+        )
 
         # Accept already-tidy rows from optimized paths.
         if "stat_key" in season_row and "value" in season_row:
@@ -1428,7 +1563,11 @@ def _render_trend_filter_caption(
     apply_filters_to_each_year: bool,
     active_filter_summary: str | None,
 ) -> None:
-    if apply_filters_to_each_year and active_filter_summary and "No filters" not in active_filter_summary:
+    if (
+        apply_filters_to_each_year
+        and active_filter_summary
+        and "No filters" not in active_filter_summary
+    ):
         st.caption(f"Filters applied to trend: {active_filter_summary}")
     elif not apply_filters_to_each_year:
         st.caption("Filters applied to trend: Off (full-season data each year).")
@@ -1533,13 +1672,31 @@ def _build_single_stat_chart(
     has_low_sample = False
 
     if not stat_df_a.empty:
-        has_low_sample = _add_trend_traces(
-            fig, stat_df_a, player_label_a, stat_key, _COLOR_TREND_A, "solid", player_type
-        ) or has_low_sample
+        has_low_sample = (
+            _add_trend_traces(
+                fig,
+                stat_df_a,
+                player_label_a,
+                stat_key,
+                _COLOR_TREND_A,
+                "solid",
+                player_type,
+            )
+            or has_low_sample
+        )
     if not stat_df_b.empty and player_label_b:
-        has_low_sample = _add_trend_traces(
-            fig, stat_df_b, player_label_b, stat_key, _COLOR_TREND_B, "dash", player_type
-        ) or has_low_sample
+        has_low_sample = (
+            _add_trend_traces(
+                fig,
+                stat_df_b,
+                player_label_b,
+                stat_key,
+                _COLOR_TREND_B,
+                "dash",
+                player_type,
+            )
+            or has_low_sample
+        )
 
     years, tick_text = _trend_year_ticks(year_range)
     stat_label = _trend_stat_label(stat_key)
@@ -1608,14 +1765,20 @@ def _build_overlay_chart(
 
     for idx, stat_key in enumerate(stat_keys):
         stat_df_a = _trend_stat_df(tidy_df_a, stat_key, year_range)
-        stat_df_b = _trend_stat_df(tidy_df_b, stat_key, year_range) if has_player_b else tidy_df_b.iloc[0:0]
+        stat_df_b = (
+            _trend_stat_df(tidy_df_b, stat_key, year_range)
+            if has_player_b
+            else tidy_df_b.iloc[0:0]
+        )
 
         if color_mode == "stat":
             stat_color = _TREND_CUSTOM_COLORS[idx % len(_TREND_CUSTOM_COLORS)]
             color_a = stat_color
             color_b = stat_color
         elif color_mode == "dashboard_metric":
-            stat_color = _TREND_DASHBOARD_METRIC_COLORS[idx % len(_TREND_DASHBOARD_METRIC_COLORS)]
+            stat_color = _TREND_DASHBOARD_METRIC_COLORS[
+                idx % len(_TREND_DASHBOARD_METRIC_COLORS)
+            ]
             color_a = stat_color
             color_b = stat_color
         else:
@@ -1624,14 +1787,32 @@ def _build_overlay_chart(
 
         if not stat_df_a.empty:
             has_data = True
-            has_low_sample = _add_trend_traces(
-                fig, stat_df_a, player_label_a, stat_key, color_a, "solid", player_type
-            ) or has_low_sample
+            has_low_sample = (
+                _add_trend_traces(
+                    fig,
+                    stat_df_a,
+                    player_label_a,
+                    stat_key,
+                    color_a,
+                    "solid",
+                    player_type,
+                )
+                or has_low_sample
+            )
         if has_player_b and not stat_df_b.empty and player_label_b:
             has_data = True
-            has_low_sample = _add_trend_traces(
-                fig, stat_df_b, player_label_b, stat_key, color_b, "dash", player_type
-            ) or has_low_sample
+            has_low_sample = (
+                _add_trend_traces(
+                    fig,
+                    stat_df_b,
+                    player_label_b,
+                    stat_key,
+                    color_b,
+                    "dash",
+                    player_type,
+                )
+                or has_low_sample
+            )
 
     if not has_data:
         return None
@@ -1698,14 +1879,22 @@ def _render_trend_data_table(
         subset["year"] = pd.to_numeric(subset["year"], errors="coerce").astype("Int64")
         subset = subset[subset["year"].notna()].copy()
         subset["year"] = subset["year"].astype(int)
-        value_pivot = subset.pivot_table(index="year", columns="stat_key", values="value", aggfunc="first")
+        value_pivot = subset.pivot_table(
+            index="year", columns="stat_key", values="value", aggfunc="first"
+        )
         value_pivot = value_pivot.reindex(columns=stat_keys)
-        pa_by_year = pd.to_numeric(subset.groupby("year", sort=True)["approx_pa"].first(), errors="coerce")
+        pa_by_year = pd.to_numeric(
+            subset.groupby("year", sort=True)["approx_pa"].first(), errors="coerce"
+        )
         return value_pivot, pa_by_year
 
     values_a, pa_a = _player_parts(tidy_df_a)
     has_player_b = player_label_b is not None
-    values_b, pa_b = _player_parts(tidy_df_b) if has_player_b else (pd.DataFrame(columns=stat_keys), pd.Series(dtype="Float64"))
+    values_b, pa_b = (
+        _player_parts(tidy_df_b)
+        if has_player_b
+        else (pd.DataFrame(columns=stat_keys), pd.Series(dtype="Float64"))
+    )
 
     year_index = sorted(
         set(values_a.index.tolist())
@@ -1719,7 +1908,7 @@ def _render_trend_data_table(
 
     table_df = pd.DataFrame({"year": year_index})
     table_df["year"] = pd.to_numeric(table_df["year"], errors="coerce").astype("Int64")
-    column_config: dict[str, st.column_config.Column] = {
+    column_config: dict[str, ColumnConfig | str | None] = {
         "year": st.column_config.NumberColumn("Year", format="%d"),
     }
 
@@ -1728,8 +1917,12 @@ def _render_trend_data_table(
         pa_col_b = f"{player_label_b} PA/BF"
         table_df[pa_col_a] = pa_a.reindex(year_index).values
         table_df[pa_col_b] = pa_b.reindex(year_index).values
-        table_df[pa_col_a] = pd.to_numeric(table_df[pa_col_a], errors="coerce").astype("Int64")
-        table_df[pa_col_b] = pd.to_numeric(table_df[pa_col_b], errors="coerce").astype("Int64")
+        table_df[pa_col_a] = pd.to_numeric(table_df[pa_col_a], errors="coerce").astype(
+            "Int64"
+        )
+        table_df[pa_col_b] = pd.to_numeric(table_df[pa_col_b], errors="coerce").astype(
+            "Int64"
+        )
         column_config[pa_col_a] = st.column_config.NumberColumn(pa_col_a, format="%d")
         column_config[pa_col_b] = st.column_config.NumberColumn(pa_col_b, format="%d")
 
@@ -1737,20 +1930,36 @@ def _render_trend_data_table(
             stat_label = _trend_stat_label(stat_key)
             col_a = f"{player_label_a} {stat_label}"
             col_b = f"{player_label_b} {stat_label}"
-            table_df[col_a] = values_a[stat_key].reindex(year_index).values if stat_key in values_a.columns else np.nan
-            table_df[col_b] = values_b[stat_key].reindex(year_index).values if stat_key in values_b.columns else np.nan
+            table_df[col_a] = (
+                values_a[stat_key].reindex(year_index).values
+                if stat_key in values_a.columns
+                else np.nan
+            )
+            table_df[col_b] = (
+                values_b[stat_key].reindex(year_index).values
+                if stat_key in values_b.columns
+                else np.nan
+            )
             stat_fmt = _trend_value_format(stat_key)
             column_config[col_a] = st.column_config.NumberColumn(col_a, format=stat_fmt)
             column_config[col_b] = st.column_config.NumberColumn(col_b, format=stat_fmt)
     else:
         table_df["PA/BF"] = pa_a.reindex(year_index).values
-        table_df["PA/BF"] = pd.to_numeric(table_df["PA/BF"], errors="coerce").astype("Int64")
+        table_df["PA/BF"] = pd.to_numeric(table_df["PA/BF"], errors="coerce").astype(
+            "Int64"
+        )
         column_config["PA/BF"] = st.column_config.NumberColumn("PA/BF", format="%d")
 
         for stat_key in stat_keys:
             stat_label = _trend_stat_label(stat_key)
-            table_df[stat_label] = values_a[stat_key].reindex(year_index).values if stat_key in values_a.columns else np.nan
-            column_config[stat_label] = st.column_config.NumberColumn(stat_label, format=_trend_value_format(stat_key))
+            table_df[stat_label] = (
+                values_a[stat_key].reindex(year_index).values
+                if stat_key in values_a.columns
+                else np.nan
+            )
+            column_config[stat_label] = st.column_config.NumberColumn(
+                stat_label, format=_trend_value_format(stat_key)
+            )
 
     st.dataframe(
         table_df,
@@ -1902,7 +2111,7 @@ def render_trend_custom(
     else:
         cols_per_row = min(len(selected), 2)
         for start in range(0, len(selected), cols_per_row):
-            row_stats = selected[start:start + cols_per_row]
+            row_stats = selected[start : start + cols_per_row]
             cols = st.columns(cols_per_row)
             for idx in range(cols_per_row):
                 with cols[idx]:
@@ -1925,7 +2134,9 @@ def render_trend_custom(
                         player_type=player_type,
                         height=280,
                     )
-                    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+                    st.plotly_chart(
+                        fig, width="stretch", config={"displayModeBar": False}
+                    )
 
     year_start, year_end = int(year_range[0]), int(year_range[1])
     table_df_a = _filter_real_data_rows(
@@ -2003,7 +2214,11 @@ def render_trend_section(
     stat_df_a = stat_df_a.sort_values("year")
     stat_df_b = stat_df_b.sort_values("year")
 
-    if apply_filters_to_each_year and active_filter_summary and "No filters" not in active_filter_summary:
+    if (
+        apply_filters_to_each_year
+        and active_filter_summary
+        and "No filters" not in active_filter_summary
+    ):
         st.caption(f"Filters applied to trend: {active_filter_summary}")
     elif not apply_filters_to_each_year:
         st.caption("Filters applied to trend: Off (full-season data each year).")
@@ -2061,10 +2276,7 @@ def render_trend_section(
             )
         )
 
-    years = sorted(
-        set(stat_df_a["year"].tolist())
-        | set(stat_df_b["year"].tolist())
-    )
+    years = sorted(set(stat_df_a["year"].tolist()) | set(stat_df_b["year"].tolist()))
     tick_text = ["2020*" if int(y) == 2020 else str(int(y)) for y in years]
     fig.update_xaxes(
         tickvals=years,
@@ -2108,32 +2320,66 @@ def render_trend_section(
                 "approx_pa": "B_approx_pa",
             }
         )
-        table_df = pd.merge(a_table, b_table, on="year", how="outer").sort_values("year")
+        table_df = pd.merge(a_table, b_table, on="year", how="outer").sort_values(
+            "year"
+        )
         table_df["diff(A-B)"] = table_df["A_value"] - table_df["B_value"]
         table_df = table_df[
-            ["year", "A_value", "B_value", "diff(A-B)", "A_n_pitches", "B_n_pitches", "A_approx_pa", "B_approx_pa"]
+            [
+                "year",
+                "A_value",
+                "B_value",
+                "diff(A-B)",
+                "A_n_pitches",
+                "B_n_pitches",
+                "A_approx_pa",
+                "B_approx_pa",
+            ]
         ]
         table_df["year"] = table_df["year"].astype("Int64")
-        table_df["A_n_pitches"] = pd.to_numeric(table_df["A_n_pitches"], errors="coerce").astype("Int64")
-        table_df["B_n_pitches"] = pd.to_numeric(table_df["B_n_pitches"], errors="coerce").astype("Int64")
-        table_df["A_approx_pa"] = pd.to_numeric(table_df["A_approx_pa"], errors="coerce").astype("Int64")
-        table_df["B_approx_pa"] = pd.to_numeric(table_df["B_approx_pa"], errors="coerce").astype("Int64")
+        table_df["A_n_pitches"] = pd.to_numeric(
+            table_df["A_n_pitches"], errors="coerce"
+        ).astype("Int64")
+        table_df["B_n_pitches"] = pd.to_numeric(
+            table_df["B_n_pitches"], errors="coerce"
+        ).astype("Int64")
+        table_df["A_approx_pa"] = pd.to_numeric(
+            table_df["A_approx_pa"], errors="coerce"
+        ).astype("Int64")
+        table_df["B_approx_pa"] = pd.to_numeric(
+            table_df["B_approx_pa"], errors="coerce"
+        ).astype("Int64")
 
-        if table_df["A_approx_pa"].isna().all() and table_df["B_approx_pa"].isna().all():
+        if (
+            table_df["A_approx_pa"].isna().all()
+            and table_df["B_approx_pa"].isna().all()
+        ):
             table_df = table_df.drop(columns=["A_approx_pa", "B_approx_pa"])
 
-        column_config: dict[str, st.column_config.Column] = {
+        column_config: dict[str, ColumnConfig | str | None] = {
             "year": st.column_config.NumberColumn("year", format="%d"),
-            "A_value": st.column_config.NumberColumn(f"{player_label_a} {stat_label}", format=_trend_value_format(selected_stat)),
-            "B_value": st.column_config.NumberColumn(f"{player_label_b} {stat_label}", format=_trend_value_format(selected_stat)),
-            "diff(A-B)": st.column_config.NumberColumn("diff(A-B)", format=_trend_value_format(selected_stat)),
+            "A_value": st.column_config.NumberColumn(
+                f"{player_label_a} {stat_label}",
+                format=_trend_value_format(selected_stat),
+            ),
+            "B_value": st.column_config.NumberColumn(
+                f"{player_label_b} {stat_label}",
+                format=_trend_value_format(selected_stat),
+            ),
+            "diff(A-B)": st.column_config.NumberColumn(
+                "diff(A-B)", format=_trend_value_format(selected_stat)
+            ),
             "A_n_pitches": st.column_config.NumberColumn("A_n_pitches", format="%d"),
             "B_n_pitches": st.column_config.NumberColumn("B_n_pitches", format="%d"),
         }
         if "A_approx_pa" in table_df.columns:
-            column_config["A_approx_pa"] = st.column_config.NumberColumn("A_approx_pa", format="%d")
+            column_config["A_approx_pa"] = st.column_config.NumberColumn(
+                "A_approx_pa", format="%d"
+            )
         if "B_approx_pa" in table_df.columns:
-            column_config["B_approx_pa"] = st.column_config.NumberColumn("B_approx_pa", format="%d")
+            column_config["B_approx_pa"] = st.column_config.NumberColumn(
+                "B_approx_pa", format="%d"
+            )
 
         st.dataframe(
             table_df,
@@ -2142,11 +2388,19 @@ def render_trend_section(
             column_config=column_config,
         )
     else:
-        table_df = stat_df_a[["year", "value", "n_pitches", "n_bip", "approx_pa"]].copy()
+        table_df = stat_df_a[
+            ["year", "value", "n_pitches", "n_bip", "approx_pa"]
+        ].copy()
         table_df["year"] = table_df["year"].astype("Int64")
-        table_df["n_pitches"] = pd.to_numeric(table_df["n_pitches"], errors="coerce").astype("Int64")
-        table_df["n_bip"] = pd.to_numeric(table_df["n_bip"], errors="coerce").astype("Int64")
-        table_df["approx_pa"] = pd.to_numeric(table_df["approx_pa"], errors="coerce").astype("Int64")
+        table_df["n_pitches"] = pd.to_numeric(
+            table_df["n_pitches"], errors="coerce"
+        ).astype("Int64")
+        table_df["n_bip"] = pd.to_numeric(table_df["n_bip"], errors="coerce").astype(
+            "Int64"
+        )
+        table_df["approx_pa"] = pd.to_numeric(
+            table_df["approx_pa"], errors="coerce"
+        ).astype("Int64")
 
         st.dataframe(
             table_df,
@@ -2154,7 +2408,9 @@ def render_trend_section(
             hide_index=True,
             column_config={
                 "year": st.column_config.NumberColumn("year", format="%d"),
-                "value": st.column_config.NumberColumn(stat_label, format=_trend_value_format(selected_stat)),
+                "value": st.column_config.NumberColumn(
+                    stat_label, format=_trend_value_format(selected_stat)
+                ),
                 "n_pitches": st.column_config.NumberColumn("n_pitches", format="%d"),
                 "n_bip": st.column_config.NumberColumn("n_bip", format="%d"),
                 "approx_pa": st.column_config.NumberColumn("approx_pa", format="%d"),
@@ -2168,6 +2424,7 @@ def render_trend_section(
 # ---------------------------------------------------------------------------
 # Player header
 # ---------------------------------------------------------------------------
+
 
 def player_header(name: str, team: str, season: int, player_type: str) -> None:
     """Render a compact player header (name · team · season · type)."""

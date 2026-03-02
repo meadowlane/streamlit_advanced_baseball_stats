@@ -3,13 +3,13 @@
 import datetime as dt
 
 import streamlit as st
-import pybaseball as pb
+import pybaseball as pb  # type: ignore[import-untyped]
 import pandas as pd
 from pybaseball import playerid_reverse_lookup
 
 # Cache TTLs
-_TTL_STATS = 3600    # 1 h — season stats refresh once an hour during the season
-_TTL_IDS   = 86400  # 24 h — player ID mappings are stable across a season
+_TTL_STATS = 3600  # 1 h — season stats refresh once an hour during the season
+_TTL_IDS = 86400  # 24 h — player ID mappings are stable across a season
 
 # FanGraphs column names for our 6 core stats
 CORE_STAT_COLS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
@@ -19,46 +19,54 @@ STATCAST_KEEP_COLS = [
     "game_date",
     "batter",
     "pitcher",
-    "p_throws",          # pitcher handedness: L or R
+    "p_throws",  # pitcher handedness: L or R
     "home_team",
     "away_team",
-    "inning",            # inning number (1–9+)
-    "inning_topbot",     # Top = visiting batter, Bot = home batter
-    "launch_speed",      # exit velocity
+    "inning",  # inning number (1–9+)
+    "inning_topbot",  # Top = visiting batter, Bot = home batter
+    "launch_speed",  # exit velocity
     "launch_angle",
-    "launch_speed_angle",    # 6 = barrel (Baseball Savant classification)
+    "launch_speed_angle",  # 6 = barrel (Baseball Savant classification)
     "estimated_woba_using_speedangle",  # xwOBA per event
-    "events",            # plate appearance result
+    "events",  # plate appearance result
     "description",
-    "stand",             # batter handedness
-    "balls",             # ball count at time of pitch (0–3)
-    "strikes",           # strike count at time of pitch (0–2)
+    "stand",  # batter handedness
+    "balls",  # ball count at time of pitch (0–3)
+    "strikes",  # strike count at time of pitch (0–2)
 ]
 PITCHER_KEEP_COLS = STATCAST_KEEP_COLS + [
     "pitch_type",
     "release_speed",
     "release_spin_rate",
     "bb_type",
-    "plate_x",   # zone
-    "plate_z",   # zone
-    "sz_top",    # zone
-    "sz_bot",    # zone
-    "pfx_x",     # movement (Slice 5)
-    "pfx_z",     # movement (Slice 5)
+    "plate_x",  # zone
+    "plate_z",  # zone
+    "sz_top",  # zone
+    "sz_bot",  # zone
+    "pfx_x",  # movement (Slice 5)
+    "pfx_z",  # movement (Slice 5)
 ]
 BATTER_KEEP_COLS = STATCAST_KEEP_COLS + [
     "pitch_type",
     "release_speed",
-    "plate_x",   # zone
-    "plate_z",   # zone
-    "sz_top",    # zone
-    "sz_bot",    # zone
-    "pfx_x",     # movement (Slice 5)
-    "pfx_z",     # movement (Slice 5)
+    "plate_x",  # zone
+    "plate_z",  # zone
+    "sz_top",  # zone
+    "sz_bot",  # zone
+    "pfx_x",  # movement (Slice 5)
+    "pfx_z",  # movement (Slice 5)
 ]
 _BATTING_BASE_COLS = ["IDfg", "Name", "Team", "PA", "Season"]
 _PITCHING_BASE_COLS = ["IDfg", "Name", "Team", "TBF", "Season"]
-_FG_WRC_PLUS_COLS = ["season", "key_mlbam", "IDfg", "Name", "Team", "name_team_key", "wRC+"]
+_FG_WRC_PLUS_COLS = [
+    "season",
+    "key_mlbam",
+    "IDfg",
+    "Name",
+    "Team",
+    "name_team_key",
+    "wRC+",
+]
 
 
 def _last_completed_season_year() -> int:
@@ -88,6 +96,7 @@ def _empty_pitching_stats_df(season: int, reason: str | None = None) -> pd.DataF
 # Pure fetch functions (no cache — called by cached wrappers; testable directly)
 # ---------------------------------------------------------------------------
 
+
 def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
     """Return FanGraphs season batting stats for all qualified batters."""
     season_int = int(season)
@@ -99,7 +108,9 @@ def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
 
     pb.cache.enable()
     try:
-        return _ensure_traditional_slash_stats(pb.batting_stats(season_int, qual=min_pa))
+        return _ensure_traditional_slash_stats(
+            pb.batting_stats(season_int, qual=min_pa)
+        )
     except Exception:
         return _empty_batting_stats_df(
             season_int,
@@ -110,7 +121,9 @@ def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
 def _safe_divide(numer: pd.Series, denom: pd.Series) -> pd.Series:
     numer_vals = pd.to_numeric(numer, errors="coerce")
     denom_vals = pd.to_numeric(denom, errors="coerce")
-    return numer_vals.where(denom_vals > 0, float("nan")) / denom_vals.where(denom_vals > 0, float("nan"))
+    return numer_vals.where(denom_vals > 0, float("nan")) / denom_vals.where(
+        denom_vals > 0, float("nan")
+    )
 
 
 def _find_col_case_insensitive(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -167,7 +180,12 @@ def _ensure_traditional_slash_stats(df: pd.DataFrame) -> pd.DataFrame:
         computed_avg = _safe_divide(hits, at_bats)
         out["AVG"] = out["AVG"].fillna(computed_avg)
 
-    if out["OBP"].isna().any() and hits is not None and at_bats is not None and walks is not None:
+    if (
+        out["OBP"].isna().any()
+        and hits is not None
+        and at_bats is not None
+        and walks is not None
+    ):
         obp_numer = hits + walks + hbp
         obp_denom = at_bats + walks + hbp + sf
         computed_obp = _safe_divide(obp_numer, obp_denom)
@@ -235,11 +253,24 @@ def _fetch_fg_batting_wrc_plus(season: int) -> pd.DataFrame:
         if "key_mlbam" in df.columns
         else pd.Series(pd.NA, index=df.index, dtype="Int64")
     )
-    out["IDfg"] = pd.to_numeric(df["IDfg"], errors="coerce") if "IDfg" in df.columns else pd.Series(pd.NA, index=df.index)
-    out["Name"] = df["Name"].astype(str) if "Name" in df.columns else pd.Series("", index=df.index, dtype="string")
-    out["Team"] = df["Team"].astype(str) if "Team" in df.columns else pd.Series("", index=df.index, dtype="string")
+    out["IDfg"] = (
+        pd.to_numeric(df["IDfg"], errors="coerce")
+        if "IDfg" in df.columns
+        else pd.Series(pd.NA, index=df.index)
+    )
+    out["Name"] = (
+        df["Name"].astype(str)
+        if "Name" in df.columns
+        else pd.Series("", index=df.index, dtype="string")
+    )
+    out["Team"] = (
+        df["Team"].astype(str)
+        if "Team" in df.columns
+        else pd.Series("", index=df.index, dtype="string")
+    )
     out["name_team_key"] = [
-        _normalize_name_team_key(name, team) for name, team in zip(out["Name"], out["Team"], strict=False)
+        _normalize_name_team_key(name, team)
+        for name, team in zip(out["Name"], out["Team"], strict=False)
     ]
     out["wRC+"] = pd.to_numeric(df[wrc_col], errors="coerce")
     return out[_FG_WRC_PLUS_COLS].copy()
@@ -294,6 +325,7 @@ def _lookup_player(last_name: str, first_name: str = "") -> pd.DataFrame:
 # Cached wrappers (used by the Streamlit app)
 # ---------------------------------------------------------------------------
 
+
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)
 def get_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
     """Cached FanGraphs season batting stats."""
@@ -334,6 +366,7 @@ def lookup_player(last_name: str, first_name: str = "") -> pd.DataFrame:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def get_player_row(batting_df: pd.DataFrame, name: str) -> pd.Series | None:
     """Return the first matching row for a player name (case-insensitive)."""
     mask = batting_df["Name"].str.lower() == name.lower()
@@ -356,7 +389,7 @@ def get_mlbam_id(fg_id: int, player_name: str | None = None) -> int | None:
     if player_name:
         parts = player_name.strip().split(" ", 1)
         first = parts[0]
-        last  = parts[1] if len(parts) > 1 else ""
+        last = parts[1] if len(parts) > 1 else ""
         name_result = _lookup_player(last, first)
         if not name_result.empty and "key_mlbam" in name_result.columns:
             valid = name_result["key_mlbam"].dropna()
