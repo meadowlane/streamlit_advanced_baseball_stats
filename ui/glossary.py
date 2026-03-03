@@ -16,6 +16,7 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 
 STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
+    # ---- Batter tier 2 opener -----------------------------------------------
     "wRC+": {
         "full_name": "Weighted Runs Created Plus",
         "definition": (
@@ -28,6 +29,7 @@ STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
         "direction_pitcher": None,
         "denominator": "Rate index scaled to league average (100), not a raw percentage.",
     },
+    # ---- Shared tier 2 (batter & pitcher) -----------------------------------
     "wOBA": {
         "full_name": "Weighted On-Base Average",
         "definition": (
@@ -80,63 +82,6 @@ STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
         "direction_pitcher": "Lower is better",
         "denominator": "Plate appearances (batters) / batters faced (pitchers).",
     },
-    "K-BB%": {
-        "full_name": "Strikeout Minus Walk Rate",
-        "definition": (
-            "A quick pitcher command/dominance indicator computed as strikeout rate "
-            "minus walk rate (K% - BB%). It captures how often a pitcher gets outs "
-            "via strikeout while avoiding free passes."
-        ),
-        "context": "Higher is better for pitchers; strong starters are often in low-to-mid teens or better.",
-        "direction": "Higher is better",
-        "direction_pitcher": None,
-        "denominator": "Batters faced (derived from K% and BB% over the same sample).",
-    },
-    "GB%": {
-        "full_name": "Ground-Ball Rate",
-        "definition": (
-            "The share of tracked balls in play that are ground balls. For pitchers, "
-            "more ground balls generally suppress damage; for batters, this is often "
-            "more neutral/context-dependent because too many grounders can cap power."
-        ),
-        "context": "Typical MLB pitcher range is roughly 40–48%; 50%+ is strong for pitchers.",
-        "direction": "Context-dependent",
-        "direction_pitcher": "Higher is better",
-        "denominator": "Tracked balls in play (batted-ball events).",
-    },
-    "CSW%": {
-        "full_name": "Called Strikes Plus Whiffs",
-        "definition": (
-            "The percentage of all pitches that end as a called strike or a swing-and-miss. "
-            "Denominator: total pitches in the selected sample."
-        ),
-        "context": "Around 28–30% is solid; low-30s is often excellent.",
-        "direction": "Higher is better",
-        "direction_pitcher": None,
-        "denominator": "Total pitches.",
-    },
-    "Whiff%": {
-        "full_name": "Whiff Rate",
-        "definition": (
-            "How often a pitcher gets a swing-and-miss when hitters swing. "
-            "Denominator: swings (not all pitches)."
-        ),
-        "context": "About 25–30% is good; 35%+ is typically elite.",
-        "direction": "Higher is better",
-        "direction_pitcher": None,
-        "denominator": "Swings.",
-    },
-    "FirstStrike%": {
-        "full_name": "First-Pitch Strike Rate",
-        "definition": (
-            "The share of 0-0 pitches that are strikes by called strike/whiff classification. "
-            "Denominator: pitches thrown in 0 balls, 0 strikes counts."
-        ),
-        "context": "League average is often near 60%; mid-60s is strong.",
-        "direction": "Higher is better",
-        "direction_pitcher": None,
-        "denominator": "0-0 first pitches.",
-    },
     "HardHit%": {
         "full_name": "Hard Hit Rate",
         "definition": (
@@ -163,6 +108,146 @@ STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
         "direction_pitcher": "Lower is better",
         "denominator": "Batted-ball events.",
     },
+    # ---- Pitcher tier 2 — Command & Dominance --------------------------------
+    "K-BB%": {
+        "full_name": "Strikeout Minus Walk Rate",
+        "definition": (
+            "A quick pitcher command/dominance indicator computed as strikeout rate "
+            "minus walk rate (K% - BB%). It captures how often a pitcher gets outs "
+            "via strikeout while avoiding free passes."
+        ),
+        "context": "Higher is better for pitchers; strong starters are often in low-to-mid teens or better.",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Batters faced (derived from K% and BB% over the same sample).",
+    },
+    "Whiff%": {
+        "full_name": "Whiff Rate",
+        "definition": (
+            "How often a pitcher gets a swing-and-miss when hitters swing. "
+            "Denominator: swings (not all pitches)."
+        ),
+        "context": "About 25–30% is good; 35%+ is typically elite.",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Swings.",
+    },
+    "CSW%": {
+        "full_name": "Called Strikes Plus Whiffs",
+        "definition": (
+            "The percentage of all pitches that end as a called strike or a swing-and-miss. "
+            "Denominator: total pitches in the selected sample."
+        ),
+        "context": "Around 28–30% is solid; low-30s is often excellent.",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Total pitches.",
+    },
+    "SO": {
+        "full_name": "Strikeouts",
+        "definition": (
+            "Total strikeouts recorded over the season. Unlike K%, this is a raw counting "
+            "stat, so it reflects both dominance and workload (innings pitched). It is "
+            "sourced from the FanGraphs season leaderboard and is not affected by the "
+            "active split filters."
+        ),
+        "context": "200+ K in a season is typically elite; 150+ is above average for starters.",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Not a rate stat (raw season count).",
+    },
+    # ---- Pitcher tier 3 — Contact Quality -----------------------------------
+    "GB%": {
+        "full_name": "Ground-Ball Rate",
+        "definition": (
+            "The share of tracked balls in play that are ground balls. For pitchers, "
+            "more ground balls generally suppress damage; for batters, this is often "
+            "more neutral/context-dependent because too many grounders can cap power."
+        ),
+        "context": "Typical MLB pitcher range is roughly 40–48%; 50%+ is strong for pitchers.",
+        "direction": "Context-dependent",
+        "direction_pitcher": "Higher is better",
+        "denominator": "Tracked balls in play (batted-ball events).",
+    },
+    # ---- Pitcher tier 3 — Stuff ---------------------------------------------
+    "FirstStrike%": {
+        "full_name": "First-Pitch Strike Rate",
+        "definition": (
+            "The share of 0-0 pitches that are strikes by called strike/whiff classification. "
+            "Denominator: pitches thrown in 0 balls, 0 strikes counts."
+        ),
+        "context": "League average is often near 60%; mid-60s is strong.",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "0-0 first pitches.",
+    },
+    "Stuff+": {
+        "full_name": "Stuff Plus",
+        "definition": (
+            "A FanGraphs model-based metric that grades a pitcher's raw stuff — velocity, "
+            "movement, spin, and release — on a scale where 100 is league average. Each "
+            "point above 100 represents one percent better than average. The model evaluates "
+            "individual pitch characteristics independently of location or game context, "
+            "making it a measure of pure pitch quality."
+        ),
+        "context": "Elite: 120+ · Above avg: 105+ · Average: 100 · Below avg: <95",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Season-level index (FanGraphs). Not filter-affected.",
+    },
+    "Location+": {
+        "full_name": "Location Plus",
+        "definition": (
+            "A FanGraphs model-based metric grading how well a pitcher spots their pitches "
+            "within and around the strike zone, on the same 100-average scale as Stuff+. "
+            "It captures command and sequencing quality independent of raw stuff. A pitcher "
+            "can outperform their Stuff+ if they locate exceptionally well."
+        ),
+        "context": "Elite: 120+ · Above avg: 105+ · Average: 100 · Below avg: <95",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Season-level index (FanGraphs). Not filter-affected.",
+    },
+    "Pitching+": {
+        "full_name": "Pitching Plus",
+        "definition": (
+            "The FanGraphs overall pitching quality index combining Stuff+ and Location+ "
+            "into a single number on the same 100-average scale. It represents a pitcher's "
+            "overall effectiveness based on pitch characteristics and command, independent "
+            "of defense and sequencing luck. Higher values indicate a more dominant pitcher."
+        ),
+        "context": "Elite: 120+ · Above avg: 105+ · Average: 100 · Below avg: <95",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Season-level index (FanGraphs). Not filter-affected.",
+    },
+    # ---- Batter traditional stats -------------------------------------------
+    "HR": {
+        "full_name": "Home Runs",
+        "definition": (
+            "Total home runs hit over the season. A direct measure of over-the-fence power. "
+            "Sourced from the FanGraphs season leaderboard and is not affected by the "
+            "active split filters."
+        ),
+        "context": "Elite: 40+ · Above avg: 25+ · Average: ~15 · Below avg: <10",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Not a rate stat (raw season count).",
+    },
+    "RBI": {
+        "full_name": "Runs Batted In",
+        "definition": (
+            "Total runs driven in over the season. RBI combines a batter's own production "
+            "with the opportunity provided by their lineup position and teammates reaching "
+            "base. It is a traditional counting stat — useful context but not park- or "
+            "opportunity-adjusted. Sourced from the FanGraphs season leaderboard."
+        ),
+        "context": "Elite: 100+ · Above avg: 80+ · Average: ~65 · Below avg: <50",
+        "direction": "Higher is better",
+        "direction_pitcher": None,
+        "denominator": "Not a rate stat (raw season count).",
+    },
+    # ---- Pitch arsenal metrics ----------------------------------------------
     "Velo": {
         "full_name": "Velocity",
         "definition": (
@@ -195,6 +280,7 @@ STAT_DEFINITIONS: dict[str, dict[str, str | None]] = {
         "direction_pitcher": None,
         "denominator": "Total pitches.",
     },
+    # ---- Sample size --------------------------------------------------------
     "PA": {
         "full_name": "Plate Appearances / Batters Faced",
         "definition": (
