@@ -47,6 +47,12 @@ _STAT_FORMAT: dict[str, tuple[str, str]] = {
     "EV": (".1f", ""),
     "LA": (".1f", ""),
     "FBv": (".1f", ""),
+    "HR": (".0f", ""),
+    "RBI": (".0f", ""),
+    "SO": (".0f", ""),
+    "Stuff+": (".0f", ""),
+    "Location+": (".0f", ""),
+    "Pitching+": (".0f", ""),
 }
 
 # Human-readable labels for split table column headers
