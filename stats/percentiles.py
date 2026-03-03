@@ -80,6 +80,10 @@ PITCHER_DISTRIBUTION_STATS: list[str] = [
     "CSW%",
     "Whiff%",
     "FirstStrike%",
+    "SO",
+    "Stuff+",
+    "Location+",
+    "Pitching+",
 ]
 PITCHER_MIN_DISTRIBUTION_SAMPLE: int = 10
 

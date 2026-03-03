@@ -76,16 +76,16 @@ SPLIT_TYPE_MAP = {
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 BATTER_EXTRA_STATS = ["wRC+"]
-TRADITIONAL_STATS = ["AVG", "OBP", "SLG", "OPS"]
+TRADITIONAL_STATS = ["AVG", "OBP", "SLG", "OPS", "HR", "RBI"]
 BATTER_STAT_ORDER = BATTER_EXTRA_STATS + CORE_STATS
 BATTER_DEFAULT_STATS = BATTER_STAT_ORDER.copy()
 
 # Pitcher stats are ordered by MLB-evaluation priority:
 # run prevention -> dominance/control -> quality of contact -> stuff/arsenal.
 PITCHER_RUN_PREVENTION_STATS = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
-PITCHER_DOMINANCE_STATS = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+PITCHER_DOMINANCE_STATS = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%", "SO"]
 PITCHER_CONTACT_STATS = ["HardHit%", "Barrel%", "GB%", "FB%", "EV", "LA"]
-PITCHER_STUFF_STATS = ["FBv", "FirstStrike%"]
+PITCHER_STUFF_STATS = ["FBv", "FirstStrike%", "Stuff+", "Location+", "Pitching+"]
 PITCHER_STAT_ORDER = (
     PITCHER_RUN_PREVENTION_STATS
     + PITCHER_DOMINANCE_STATS
@@ -94,11 +94,11 @@ PITCHER_STAT_ORDER = (
 )
 # --- Pitcher Tier 2 (always visible, two labeled groups) ---
 PITCHER_TIER2_OUTCOME = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
-PITCHER_TIER2_DOMINANCE = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+PITCHER_TIER2_DOMINANCE = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%", "SO"]
 
 # --- Pitcher Tier 3 (behind expander) ---
 PITCHER_TIER3_CONTACT = ["HardHit%", "Barrel%", "GB%"]
-PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%"]
+PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%", "Stuff+", "Location+", "Pitching+"]
 PITCHER_TIER3_STATS = PITCHER_TIER3_CONTACT + PITCHER_TIER3_STUFF
 
 # --- Batter Tiers ---
@@ -122,6 +122,10 @@ PITCHER_SEASON_ONLY_STAT_COLS: dict[str, list[str]] = {
     "EV": ["EV", "EVv"],
     "LA": ["LA"],
     "FBv": ["FBv", "FB Velo", "FBv (mph)"],
+    "SO": ["SO"],
+    "Stuff+": ["Stuff+"],
+    "Location+": ["Location+"],
+    "Pitching+": ["Pitching+"],
 }
 PITCHER_SEASON_ONLY_STATS = frozenset(PITCHER_SEASON_ONLY_STAT_COLS.keys())
 PITCHER_PERCENT_STATS = frozenset(
@@ -433,7 +437,7 @@ def _normalize_pitcher_stat_value(stat: str, value: float | None) -> float | Non
     out = float(value)
     if stat in PITCHER_PERCENT_STATS and abs(out) <= 1.0:
         out *= 100.0
-    if stat in {"W", "L"}:
+    if stat in {"W", "L", "SO", "Stuff+", "Location+", "Pitching+"}:
         return float(int(round(out)))
     if stat == "IP":
         return round(out, 1)
@@ -1728,7 +1732,7 @@ if (
     and traditional_color_tiers is not None
 ):
     _render_section_heading("Traditional Stats", top_margin_px=18)
-    st.caption("Slash line + OPS (percentiles vs qualified hitters).")
+    st.caption("Slash line + OPS, HR, RBI (percentiles vs qualified hitters).")
     if (
         comparison_mode
         and traditional_stats_b is not None
