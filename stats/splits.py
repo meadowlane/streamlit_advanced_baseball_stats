@@ -45,10 +45,12 @@ PA_EVENTS = frozenset(
         "triple",
         "home_run",
         "walk",
+        "intent_walk",  # intentional walk — counts as PA (not AB)
         "hit_by_pitch",
         "strikeout",
         "strikeout_double_play",
         "field_out",
+        "field_error",  # reached on error — counts as PA and AB
         "grounded_into_double_play",
         "double_play",
         "triple_play",

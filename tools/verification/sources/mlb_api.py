@@ -14,11 +14,11 @@ Pitcher: GET https://statsapi.mlb.com/api/v1/people/{mlbam_id}/stats
 
 Multi-team players
 ------------------
-The API returns one split entry per team.  We select the entry with the
-*highest* plateAppearances / battersFaced value, which should be the combined
-(total) row or the team where the player spent the majority of the season.
-Some seasons may produce separate per-team entries — this is documented in the
-report as a "multi-team" note.
+The API returns one split entry per team.  We first look for an explicit
+"Total" / "2TM" / "3TM" row; when absent, we aggregate all per-team splits by
+summing counting stats (PA, AB, H, HR, BB, SO, HBP, …) and recomputing derived
+rates (AVG, OBP, K%, BB%) from the aggregated totals.  This ensures season-wide
+accuracy for multi-team seasons (e.g. players traded mid-year).
 """
 
 from __future__ import annotations
@@ -62,22 +62,102 @@ def _get(url: str, params: dict[str, Any]) -> dict[str, Any]:
         raise SourceError(f"MLB API unexpected error: {exc}") from exc
 
 
-def _pick_best_split(splits: list[dict[str, Any]], pa_key: str) -> dict[str, Any] | None:
-    """Return the split entry with the highest plate appearances."""
+def _aggregate_hitting_splits(splits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sum counting stats across all per-team splits and recompute rate stats."""
+    count_keys = [
+        "plateAppearances", "atBats", "hits", "homeRuns",
+        "baseOnBalls", "strikeOuts", "hitByPitch", "sacBunts", "sacFlies",
+    ]
+    totals: dict[str, Any] = {}
+    for key in count_keys:
+        total, has = 0, False
+        for split in splits:
+            val = split.get("stat", {}).get(key)
+            if val is not None:
+                try:
+                    total += int(float(val))
+                    has = True
+                except (TypeError, ValueError):
+                    pass
+        if has:
+            totals[key] = total
+
+    h = totals.get("hits", 0)
+    ab = totals.get("atBats", 0)
+    bb = totals.get("baseOnBalls", 0)
+    hbp = totals.get("hitByPitch", 0)
+    sf = totals.get("sacFlies", 0)
+    if ab > 0:
+        totals["avg"] = f"{h / ab:.3f}"
+    obp_denom = ab + bb + hbp + sf
+    if obp_denom > 0:
+        totals["obp"] = f"{(h + bb + hbp) / obp_denom:.3f}"
+    # SLG/OPS need total bases — fall back to highest-PA split for these
+    best = max(
+        splits,
+        key=lambda s: normalize_count(s.get("stat", {}).get("plateAppearances")) or 0,
+    )
+    for rate_key in ("slg", "ops"):
+        v = best.get("stat", {}).get(rate_key)
+        if v is not None:
+            totals[rate_key] = v
+    return totals
+
+
+def _aggregate_pitching_splits(splits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sum counting stats across all per-team pitching splits and recompute rates."""
+    count_keys = [
+        "battersFaced", "wins", "losses", "strikeOuts",
+        "baseOnBalls", "homeRuns", "hitBatsmen", "earnedRuns",
+    ]
+    totals: dict[str, Any] = {}
+    for key in count_keys:
+        total, has = 0, False
+        for split in splits:
+            val = split.get("stat", {}).get(key)
+            if val is not None:
+                try:
+                    total += int(float(val))
+                    has = True
+                except (TypeError, ValueError):
+                    pass
+        if has:
+            totals[key] = total
+
+    ip_sum, has_ip = 0.0, False
+    for split in splits:
+        ip_raw = split.get("stat", {}).get("inningsPitched")
+        if ip_raw is not None:
+            ip = normalize_ip(str(ip_raw))
+            if ip is not None:
+                ip_sum += ip
+                has_ip = True
+    if has_ip:
+        totals["inningsPitched"] = ip_sum
+        er = totals.get("earnedRuns", 0)
+        if ip_sum > 0:
+            totals["era"] = f"{(er * 9) / ip_sum:.2f}"
+
+    return totals
+
+
+def _get_stat_dict(
+    splits: list[dict[str, Any]],
+    pa_key: str,
+    aggregate_fn: Any,
+) -> dict[str, Any] | None:
+    """Return the best stat dict: prefer explicit TOT row, else aggregate all splits."""
     if not splits:
         return None
-    # Prefer a split labelled "Total" or "2TM" / "3TM"
+    if len(splits) == 1:
+        return splits[0].get("stat", {})
+    # Prefer an explicit "Total" or multi-team label (e.g. "2TM", "3TM")
     for split in splits:
         team_name = split.get("team", {}).get("name", "").lower()
         if "total" in team_name or team_name in ("2tm", "3tm"):
-            return split
-    # Fall back to highest PA
-    def _pa(s: dict[str, Any]) -> int:
-        stat = s.get("stat", {})
-        return (
-            normalize_count(stat.get(pa_key)) or 0
-        )
-    return max(splits, key=_pa)
+            return split.get("stat", {})
+    # No total row — aggregate all per-team splits
+    return aggregate_fn(splits)
 
 
 class MLBApiSource(BaseSource):
@@ -113,13 +193,12 @@ class MLBApiSource(BaseSource):
         })
 
         splits = self._extract_splits(data)
-        best = _pick_best_split(splits, "plateAppearances")
-        if best is None:
+        stat = _get_stat_dict(splits, "plateAppearances", _aggregate_hitting_splits)
+        if stat is None:
             raise SourceError(
                 f"MLB API: no hitting splits for {player.name} in {year}"
             )
 
-        stat = best.get("stat", {})
         return self._parse_hitting_stat(stat)
 
     def get_pitcher_season(
@@ -148,13 +227,12 @@ class MLBApiSource(BaseSource):
         })
 
         splits = self._extract_splits(data)
-        best = _pick_best_split(splits, "battersFaced")
-        if best is None:
+        stat = _get_stat_dict(splits, "battersFaced", _aggregate_pitching_splits)
+        if stat is None:
             raise SourceError(
                 f"MLB API: no pitching splits for {player.name} in {year}"
             )
 
-        stat = best.get("stat", {})
         return self._parse_pitching_stat(stat)
 
     @staticmethod

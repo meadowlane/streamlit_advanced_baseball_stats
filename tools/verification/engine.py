@@ -80,8 +80,8 @@ GOLDEN_PLAYERS: dict[str, PlayerIdentity] = {
     ),
     "Luis Arraez 2024": PlayerIdentity(
         name="Luis Arraez",
-        mlbam_id=650402,
-        fg_id=18403,
+        mlbam_id=650333,
+        fg_id=18568,
         bref_id="arraelu01",
     ),
     "Juan Soto 2024": PlayerIdentity(
@@ -496,7 +496,7 @@ def run_golden_set_verification(
     batter_players = {
         592450: GOLDEN_PLAYERS["Aaron Judge 2024"],
         660271: GOLDEN_PLAYERS["Shohei Ohtani 2024"],
-        650402: GOLDEN_PLAYERS["Luis Arraez 2024"],
+        650333: GOLDEN_PLAYERS["Luis Arraez 2024"],
         665742: GOLDEN_PLAYERS["Juan Soto 2024"],
     }
     pitcher_players_2023 = {

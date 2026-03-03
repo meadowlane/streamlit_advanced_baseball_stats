@@ -26,7 +26,22 @@ from typing import Any
 # Fixture directory — relative to the project root
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+def _find_project_root(start: Path) -> Path:
+    """Walk up from *start* until a .git or pyproject.toml marker is found.
+
+    More robust than hardcoding ``parents[n]`` — works regardless of how deep
+    this file sits inside the project tree.
+    """
+    candidate = start.resolve()
+    while candidate != candidate.parent:
+        if (candidate / ".git").exists() or (candidate / "pyproject.toml").exists():
+            return candidate
+        candidate = candidate.parent
+    return start.resolve()  # fallback: use the file's own directory
+
+
+_PROJECT_ROOT = _find_project_root(Path(__file__).parent)
 FIXTURE_DIR = _PROJECT_ROOT / "tests" / "verification_fixtures"
 
 
