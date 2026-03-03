@@ -582,6 +582,38 @@ def _render_batter_headline_md(player_row: "pd.Series | None", sample_text: str 
         st.caption(f"Sample size: {sample_text}")
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_player_handedness(mlbam_id: int) -> dict:
+    """Return {'bats': str|None, 'throws': str|None} from MLB Stats API. Cached 24 h."""
+    import requests as _req  # already installed as transitive dep of pybaseball
+    _CODE = {"L": "Left", "R": "Right", "S": "Both", "B": "Both"}
+    try:
+        url = f"https://statsapi.mlb.com/api/v1/people/{mlbam_id}"
+        person = _req.get(url, timeout=5).json().get("people", [{}])[0]
+        return {
+            "bats": _CODE.get((person.get("batSide") or {}).get("code", ""), None),
+            "throws": _CODE.get((person.get("pitchHand") or {}).get("code", ""), None),
+        }
+    except Exception:
+        return {"bats": None, "throws": None}
+
+
+def _render_handedness_md(mlbam_id: int) -> None:
+    """Render 'Throws: X  Bats: Y' on its own line between player name and team/year."""
+    h = _get_player_handedness(mlbam_id)
+    parts = []
+    if h.get("throws"):
+        parts.append(f"Throws: {h['throws']}")
+    if h.get("bats"):
+        parts.append(f"Bats: {h['bats']}")
+    if parts:
+        st.markdown(
+            f'<p style="font-size:14px;color:rgba(255,255,255,0.5);margin:-4px 0 2px">'
+            f"{'  '.join(parts)}</p>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render_subheading_md(team: str, season: int) -> None:
     """Render team · season in slightly-larger subdued text, no player type."""
     st.markdown(
@@ -1632,30 +1664,36 @@ if comparison_mode and team_b is not None:
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
+            _render_handedness_md(mlbam_id)
             _render_subheading_md(team, season_a)
             _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
+            _render_handedness_md(mlbam_id_b)
             _render_subheading_md(team_b, season_b)
             _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats_b))
     else:
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
+            _render_handedness_md(mlbam_id)
             _render_subheading_md(team, season_a)
             _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
+            _render_handedness_md(mlbam_id_b)
             _render_subheading_md(team_b, season_b)
             sample_text_b = _sample_size_text(sample_sizes_b, player_type) if sample_sizes_b is not None else None
             _render_batter_headline_md(player_row_b, sample_text_b)
 else:
     if player_type == "Pitcher":
         st.subheader(selected_name)
+        _render_handedness_md(mlbam_id)
         _render_subheading_md(team, season_a)
         _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
     else:
         st.subheader(selected_name)
+        _render_handedness_md(mlbam_id)
         _render_subheading_md(team, season_a)
         _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
 
