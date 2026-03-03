@@ -29,6 +29,11 @@ from data.fetcher import (  # noqa: E402
 from stats.splits import _compute_stats, _compute_all_pitcher_stats  # noqa: E402
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
+from tools.verification.game_scope import (  # noqa: E402
+    filter_by_scope,
+    pa_breakdown_by_game_type,
+    SOURCE_SCOPE_SUPPORT,
+)
 
 
 # Pitcher FG passthrough columns we want to expose alongside the Statcast stats.
@@ -76,11 +81,16 @@ class AppSource(BaseSource):
     def source_name(self) -> str:
         return "app"
 
+    @property
+    def supported_scopes(self) -> frozenset[str]:
+        return SOURCE_SCOPE_SUPPORT["app"]
+
     def get_batter_season(
         self,
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
         if offline:
@@ -100,8 +110,16 @@ class AppSource(BaseSource):
                 f"Player '{player.name}' not found in FanGraphs batting data for {year}"
             )
 
-        # 2. Statcast pitch-level data → compute stats
-        sc_df = _fetch_statcast_batter(player.mlbam_id, year)
+        # 2. Statcast pitch-level data (full season, all game types)
+        sc_df_full = _fetch_statcast_batter(player.mlbam_id, year)
+
+        # Record PA breakdown by game_type BEFORE filtering — used for diagnostics
+        _pa_breakdown = pa_breakdown_by_game_type(sc_df_full)
+
+        # Filter to the requested scope
+        sc_df = filter_by_scope(sc_df_full, game_type)
+
+        # Compute stats from scope-filtered data
         computed = _compute_stats(sc_df, player_type="Batter")
 
         # 3. Merge: Statcast-computed stats override FG where both exist, except for
@@ -120,6 +138,9 @@ class AppSource(BaseSource):
         if "F-Strike%" in result:
             result["FirstStrike%"] = result.pop("F-Strike%")
 
+        # Attach diagnostic metadata (underscore prefix → not treated as a stat)
+        result["_pa_by_game_type"] = _pa_breakdown
+
         return result
 
     def get_pitcher_season(
@@ -127,6 +148,7 @@ class AppSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
         if offline:
@@ -143,8 +165,12 @@ class AppSource(BaseSource):
                 f"Pitcher '{player.name}' not found in FanGraphs pitching data for {year}"
             )
 
-        # 2. Statcast pitch-level data → compute pitcher stats
-        sc_df = _fetch_statcast_pitcher(player.mlbam_id, year)
+        # 2. Statcast pitch-level data (full season, all game types)
+        sc_df_full = _fetch_statcast_pitcher(player.mlbam_id, year)
+
+        # Filter to the requested scope before computing
+        sc_df = filter_by_scope(sc_df_full, game_type)
+
         computed = _compute_all_pitcher_stats(sc_df)
 
         # 3. FG passthroughs (ERA, FIP, xFIP, SIERA, xERA, FBv, Stuff+ etc.)

@@ -56,6 +56,13 @@ from tools.verification.fixtures import fixture_exists, load_fixture
 from tools.verification.stat_map import STAT_MAP, TOLERANCES
 from tools.verification.normalization import normalize_ip, normalize_pct
 from tools.verification.comparison import StatComparison
+from tools.verification.game_scope import (
+    filter_by_scope,
+    pa_breakdown_by_game_type,
+    REGULAR_GAME_TYPES,
+    POSTSEASON_GAME_TYPES,
+    SOURCE_SCOPE_SUPPORT,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +449,242 @@ class TestGoldenPitchers:
             assert k_cmp.our_value >= 30.0, (
                 f"Strider 2023 K% = {k_cmp.our_value!r} — expected ≥ 30%"
             )
+
+
+# ---------------------------------------------------------------------------
+# Game scope tests — no network, no fixtures; uses a synthetic DataFrame
+# ---------------------------------------------------------------------------
+
+
+class TestGameScope:
+    """Unit tests for game-type scope filtering.
+
+    All tests use a synthetic Statcast-like DataFrame that mirrors the
+    Juan Soto 2024 pattern: 713 regular-season PA + 101 postseason PA
+    (the known discrepancy that motivated this feature).
+    """
+
+    # -------------------------------------------------------------------
+    # Shared fixture: synthetic event DataFrame
+    # -------------------------------------------------------------------
+
+    @staticmethod
+    def _make_soto_like_df():
+        """Return a minimal synthetic DataFrame with mixed game_type rows.
+
+        Mimics Juan Soto 2024 season:
+          - R:  713 PA + 87 non-PA pitches
+          - F:   15 PA (Wild Card)
+          - D:   22 PA (Division Series)
+          - L:   64 PA (League Championship)
+        Total PA across all types: 814; regular PA only: 713.
+        """
+        import pandas as pd
+
+        # Use a minimal PA event that stats.splits.PA_EVENTS will recognise
+        # (import that at test time to avoid import ordering issues)
+        try:
+            from stats.splits import PA_EVENTS
+            pa_event = next(iter(PA_EVENTS))  # any PA event (e.g. "single")
+        except ImportError:
+            pa_event = "single"  # fallback if stats.splits not available
+
+        rows = []
+        # Regular season: 713 PA events + 87 non-PA pitches (balls, etc.)
+        for _ in range(713):
+            rows.append({"game_type": "R", "events": pa_event, "batter": 665742})
+        for _ in range(87):
+            rows.append({"game_type": "R", "events": None, "batter": 665742})
+
+        # Postseason PA
+        for _ in range(15):
+            rows.append({"game_type": "F", "events": pa_event, "batter": 665742})
+        for _ in range(22):
+            rows.append({"game_type": "D", "events": pa_event, "batter": 665742})
+        for _ in range(64):
+            rows.append({"game_type": "L", "events": pa_event, "batter": 665742})
+
+        return pd.DataFrame(rows)
+
+    # -------------------------------------------------------------------
+    # filter_by_scope tests
+    # -------------------------------------------------------------------
+
+    def test_filter_regular_keeps_only_R_rows(self) -> None:
+        df = self._make_soto_like_df()
+        filtered = filter_by_scope(df, "regular")
+        assert set(filtered["game_type"].unique()) == {"R"}, (
+            f"Regular filter should keep only R rows; got {filtered['game_type'].unique()}"
+        )
+
+    def test_filter_regular_row_count(self) -> None:
+        """Regular filter should drop all postseason rows (713 PA + 87 non-PA = 800)."""
+        df = self._make_soto_like_df()
+        filtered = filter_by_scope(df, "regular")
+        assert len(filtered) == 800  # 713 PA + 87 non-PA pitches
+
+    def test_filter_postseason_excludes_regular(self) -> None:
+        df = self._make_soto_like_df()
+        filtered = filter_by_scope(df, "postseason")
+        assert "R" not in filtered["game_type"].unique(), (
+            "Postseason filter should exclude regular-season rows"
+        )
+        # All postseason rows: 15 + 22 + 64 = 101 rows
+        assert len(filtered) == 101
+
+    def test_filter_all_includes_every_row(self) -> None:
+        df = self._make_soto_like_df()
+        filtered = filter_by_scope(df, "all")
+        assert len(filtered) == len(df), (
+            "All-scope filter must include every row"
+        )
+
+    def test_filter_missing_game_type_column_is_a_noop(self) -> None:
+        """When game_type column is absent, filter_by_scope returns df unchanged."""
+        import pandas as pd
+        df = pd.DataFrame({"events": ["single", "walk"]})
+        filtered = filter_by_scope(df, "regular")
+        assert len(filtered) == len(df)
+
+    # -------------------------------------------------------------------
+    # pa_breakdown_by_game_type tests
+    # -------------------------------------------------------------------
+
+    def test_pa_breakdown_counts_pa_events_per_game_type(self) -> None:
+        df = self._make_soto_like_df()
+        breakdown = pa_breakdown_by_game_type(df)
+        assert breakdown.get("R") == 713, f"R PA expected 713, got {breakdown.get('R')}"
+        assert breakdown.get("F") == 15,  f"F PA expected 15, got {breakdown.get('F')}"
+        assert breakdown.get("D") == 22,  f"D PA expected 22, got {breakdown.get('D')}"
+        assert breakdown.get("L") == 64,  f"L PA expected 64, got {breakdown.get('L')}"
+
+    def test_pa_breakdown_excludes_non_pa_rows(self) -> None:
+        """Non-PA pitches (events=None) must not be counted in breakdown."""
+        df = self._make_soto_like_df()
+        breakdown = pa_breakdown_by_game_type(df)
+        # Total across all game types: 713+15+22+64 = 814 (not 814+87)
+        total = sum(breakdown.values())
+        assert total == 814, f"Total PA expected 814, got {total}"
+
+    # -------------------------------------------------------------------
+    # Scope regression: regular PA must match independent regular-season source
+    # -------------------------------------------------------------------
+
+    def test_regular_scope_pa_matches_fangraphs_figure(self) -> None:
+        """Core regression: after filtering to regular scope, PA = 713 (the FG/MLB API value)."""
+        try:
+            from stats.splits import PA_EVENTS
+        except ImportError:
+            pytest.skip("stats.splits not importable in this environment")
+
+        import pandas as pd
+
+        df = self._make_soto_like_df()
+        regular_df = filter_by_scope(df, "regular")
+
+        pa_count = regular_df[
+            regular_df["events"].notna() & regular_df["events"].isin(PA_EVENTS)
+        ].shape[0]
+
+        # 713 = the FG/MLB API regular-season PA for Juan Soto 2024
+        assert pa_count == 713, (
+            f"Expected 713 regular-season PA (the FG/MLB API figure), got {pa_count}"
+        )
+
+    def test_all_scope_pa_exceeds_regular(self) -> None:
+        """'all' scope must have more PA than regular — postseason is included."""
+        try:
+            from stats.splits import PA_EVENTS
+        except ImportError:
+            pytest.skip("stats.splits not importable in this environment")
+
+        df = self._make_soto_like_df()
+
+        regular_df = filter_by_scope(df, "regular")
+        all_df = filter_by_scope(df, "all")
+
+        pa_regular = regular_df[
+            regular_df["events"].notna() & regular_df["events"].isin(PA_EVENTS)
+        ].shape[0]
+        pa_all = all_df[
+            all_df["events"].notna() & all_df["events"].isin(PA_EVENTS)
+        ].shape[0]
+
+        assert pa_all > pa_regular, "All scope must include more PA than regular"
+        assert pa_all == 814, f"All-scope PA expected 814, got {pa_all}"
+
+    def test_postseason_scope_pa_equals_playoff_sum(self) -> None:
+        """Postseason PA = sum of F + D + L rows (15 + 22 + 64 = 101)."""
+        try:
+            from stats.splits import PA_EVENTS
+        except ImportError:
+            pytest.skip("stats.splits not importable in this environment")
+
+        df = self._make_soto_like_df()
+        post_df = filter_by_scope(df, "postseason")
+
+        pa_post = post_df[
+            post_df["events"].notna() & post_df["events"].isin(PA_EVENTS)
+        ].shape[0]
+
+        assert pa_post == 101, f"Postseason PA expected 101, got {pa_post}"
+
+    # -------------------------------------------------------------------
+    # Source capability matrix tests
+    # -------------------------------------------------------------------
+
+    def test_event_based_sources_support_all_scopes(self) -> None:
+        """App and statcast sources must support all three scopes."""
+        for src in ("app", "statcast"):
+            supported = SOURCE_SCOPE_SUPPORT[src]
+            assert "regular" in supported, f"{src} must support 'regular'"
+            assert "postseason" in supported, f"{src} must support 'postseason'"
+            assert "all" in supported, f"{src} must support 'all'"
+
+    def test_aggregated_sources_support_only_regular(self) -> None:
+        """FanGraphs, MLB API, and BRef must support only 'regular' scope."""
+        for src in ("fangraphs", "mlb_api", "baseball_ref"):
+            supported = SOURCE_SCOPE_SUPPORT[src]
+            assert supported == frozenset(["regular"]), (
+                f"{src} should support only 'regular'; got {supported}"
+            )
+
+    # -------------------------------------------------------------------
+    # Soto 2024 fixture-based assertion (offline; skip if no fixtures)
+    # -------------------------------------------------------------------
+
+    def test_soto_2024_pa_in_regular_scope_matches_fangraphs_fixture(self) -> None:
+        """If both app and fangraphs fixtures exist for Soto 2024, app PA ≤ FG PA + 5.
+
+        With scope filtering applied, the app's regular-season PA must equal
+        (or be very close to) the FanGraphs regular-season PA.  A large delta
+        indicates the scope filter is not being applied correctly.
+
+        Note: fixtures recorded before this fix may still show the old (unfiltered)
+        values.  Re-run ``--record-fixtures`` to refresh them.
+        """
+        mlbam_id, year = 665742, 2024
+
+        if not fixture_exists("fangraphs", "batter", mlbam_id, year):
+            pytest.skip("FanGraphs fixture missing for Juan Soto 2024 — run --record-fixtures")
+        if not fixture_exists("app", "batter", mlbam_id, year):
+            pytest.skip("App fixture missing for Juan Soto 2024 — run --record-fixtures")
+
+        fg_data = load_fixture("fangraphs", "batter", mlbam_id, year)
+        app_data = load_fixture("app", "batter", mlbam_id, year)
+
+        fg_pa = fg_data.get("PA")
+        app_pa = app_data.get("PA")
+
+        if fg_pa is None or app_pa is None:
+            pytest.skip("PA not present in one or both fixtures")
+
+        assert abs(app_pa - fg_pa) <= 5, (
+            f"App PA ({app_pa}) differs from FanGraphs PA ({fg_pa}) by more than 5. "
+            f"This suggests the game-type scope filter is not applied in the app source. "
+            f"Re-record fixtures after this fix with: "
+            f"python -m tools.verify_stats --record-fixtures --golden-set"
+        )
 
 
 # ---------------------------------------------------------------------------

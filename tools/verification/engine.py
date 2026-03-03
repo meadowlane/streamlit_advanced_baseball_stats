@@ -47,7 +47,7 @@ from tools.verification.sources.fangraphs import FanGraphsSource
 from tools.verification.sources.statcast import StatcastSource
 from tools.verification.sources.mlb_api import MLBApiSource
 from tools.verification.sources.baseball_ref import BaseballRefSource
-from tools.verification.comparison import compare_all_stats
+from tools.verification.comparison import compare_all_stats, StatComparison
 from tools.verification.reporting import PlayerReport
 from tools.verification.fixtures import (
     save_fixture,
@@ -56,6 +56,7 @@ from tools.verification.fixtures import (
     FixtureNotFoundError,
 )
 from tools.verification.normalization import normalize_stat
+from tools.verification.game_scope import SOURCE_SCOPE_SUPPORT, REGULAR_GAME_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +137,28 @@ def _fetch_with_fixture_support(
     year: int,
     player_type: str,
     *,
+    game_type: str = "regular",
     offline: bool,
     record: bool,
+    verbose: bool = False,
 ) -> dict[str, Any] | None:
     """Fetch stats from *source*, using/writing fixtures as instructed.
 
-    Returns ``None`` when the source is unavailable and we should skip it.
+    Returns ``None`` when the source is unavailable or does not support the
+    requested scope — in which case it should be treated as SKIP, not FAIL.
     """
     src = source.source_name
+
+    # --- Scope capability check ---
+    supported = SOURCE_SCOPE_SUPPORT.get(src, frozenset(["regular"]))
+    if game_type not in supported:
+        if verbose:
+            print(
+                f"  [SKIP] {src}: does not support scope={game_type!r} "
+                f"(supports: {sorted(supported)}) — comparison skipped",
+                file=sys.stderr,
+            )
+        return None
 
     # --- Offline mode: load from fixture ---
     if offline:
@@ -156,11 +171,14 @@ def _fetch_with_fixture_support(
     # --- Live fetch ---
     try:
         if player_type == "batter":
-            data = source.get_batter_season(player, year)
+            data = source.get_batter_season(player, year, game_type=game_type)
         else:
-            data = source.get_pitcher_season(player, year)
+            data = source.get_pitcher_season(player, year, game_type=game_type)
     except SourceError as exc:
-        print(f"  [WARN] {src}: {exc}", file=sys.stderr)
+        # A source that doesn't support the scope raises SourceError — treat as SKIP
+        msg = str(exc)
+        level = "[SKIP]" if "SKIP" in msg else "[WARN]"
+        print(f"  {level} {src}: {msg}", file=sys.stderr)
         return None
     except Exception as exc:
         print(f"  [ERROR] {src} unexpected error: {exc}", file=sys.stderr)
@@ -179,6 +197,7 @@ def _fetch_app_stats(
     year: int,
     player_type: str,
     *,
+    game_type: str = "regular",
     offline: bool,
     record: bool,
 ) -> dict[str, Any] | None:
@@ -195,15 +214,17 @@ def _fetch_app_stats(
     app = AppSource()
     try:
         if player_type == "batter":
-            data = app.get_batter_season(player, year)
+            data = app.get_batter_season(player, year, game_type=game_type)
         else:
-            data = app.get_pitcher_season(player, year)
+            data = app.get_pitcher_season(player, year, game_type=game_type)
     except SourceError as exc:
         print(f"  [WARN] AppSource: {exc}", file=sys.stderr)
         return None
 
     if record:
-        path = save_fixture(src_name, player_type, player.mlbam_id, year, data)
+        # Strip internal metadata keys before saving fixture
+        fixture_data = {k: v for k, v in data.items() if not k.startswith("_")}
+        path = save_fixture(src_name, player_type, player.mlbam_id, year, fixture_data)
         print(f"  [RECORDED] {path}", file=sys.stderr)
 
     return data
@@ -213,13 +234,80 @@ def _normalize_source_dict(
     raw: dict[str, Any],
     source_name: str,
 ) -> dict[str, Any]:
-    """Apply per-stat normalization to all values in a source dict."""
+    """Apply per-stat normalization to all values in a source dict.
+
+    Keys prefixed with ``_`` are internal metadata (e.g. ``_pa_by_game_type``)
+    and are skipped — they are not stats and must not be compared.
+    """
     result: dict[str, Any] = {}
     for key, val in raw.items():
+        if key.startswith("_"):
+            continue  # skip internal metadata
         norm = normalize_stat(key, val, source_name)
         if norm is not None:
             result[key] = norm
     return result
+
+
+def _apply_scope_mismatch_verdicts(
+    comparisons: list[StatComparison],
+    pa_by_game_type: dict[str, int],
+) -> list[StatComparison]:
+    """Downgrade PA/counting FAIL → SCOPE_MISMATCH when non-regular games explain it.
+
+    When the unfiltered Statcast data contains non-regular game rows (postseason,
+    spring), and that extra count approximates the discrepancy vs. regular-season
+    sources, the mismatch is clearly a scoping issue — not a computation bug.
+
+    This function is only applied when ``game_type == "regular"`` but some
+    non-regular rows were still found (e.g. ``game_type`` column missing from
+    the raw data, preventing proper filtering).
+    """
+    # Count PA from non-regular game types
+    extra_pa = sum(
+        count for gt, count in pa_by_game_type.items()
+        if gt not in REGULAR_GAME_TYPES
+    )
+    if extra_pa == 0:
+        return comparisons
+
+    non_regular = {
+        gt: count for gt, count in pa_by_game_type.items()
+        if gt not in REGULAR_GAME_TYPES
+    }
+    breakdown_str = "  ".join(
+        f"{gt}={n}" for gt, n in sorted(non_regular.items())
+    )
+
+    # Stats directly affected by game-scope: counting stats and PA-derived rates
+    scope_sensitive = frozenset(["PA", "H", "HR", "BB", "SO", "HBP"])
+
+    for cmp in comparisons:
+        if cmp.verdict != "FAIL":
+            continue
+        if cmp.stat not in scope_sensitive:
+            continue
+        if cmp.our_value is None:
+            continue
+        # Check if the discrepancy vs. any source is within tolerance of extra_pa
+        for src_val in cmp.source_values.values():
+            if src_val is None:
+                continue
+            try:
+                delta = abs(float(cmp.our_value) - float(src_val))
+            except (TypeError, ValueError):
+                continue
+            # Allow ±5 rounding wiggle-room
+            if delta <= extra_pa + 5:
+                cmp.verdict = "SCOPE_MISMATCH"
+                cmp.note = (
+                    f"Mismatch likely due to non-regular games in source data "
+                    f"(game_type filter may not have applied). "
+                    f"Non-regular PA: +{extra_pa}  ({breakdown_str})"
+                )
+                break
+
+    return comparisons
 
 
 def _extract_sample_notes(stats: dict[str, Any]) -> dict[str, int | float | None]:
@@ -244,6 +332,7 @@ def run_verification(
     *,
     player_identities: dict[int, PlayerIdentity] | None = None,
     stats_to_check: list[str] | None = None,
+    game_type: str = "regular",
     offline: bool = False,
     record_fixtures: bool = False,
     verbose: bool = False,
@@ -264,6 +353,10 @@ def run_verification(
         is skipped — name-based matching on FG/BRef will fail without it).
     stats_to_check:
         Subset of canonical stat keys.  ``None`` = all found.
+    game_type:
+        ``"regular"`` (default), ``"postseason"``, or ``"all"``.
+        Sources that don't support the requested scope are silently skipped
+        (treated as SKIP, not FAIL).
     offline:
         Load all data from recorded fixtures; raise if missing.
     record_fixtures:
@@ -272,6 +365,9 @@ def run_verification(
         Print progress to stderr.
     """
     reports: list[PlayerReport] = []
+
+    if verbose:
+        print(f"[Scope] Game type: {game_type}", file=sys.stderr)
 
     for mlbam_id in player_ids:
         # Resolve or build a minimal PlayerIdentity
@@ -282,35 +378,43 @@ def run_verification(
             player = PlayerIdentity(name=str(mlbam_id), mlbam_id=mlbam_id)
 
         if verbose:
-            print(f"\n[{player.name} / {year} / {player_type}]", file=sys.stderr)
+            print(f"\n[{player.name} / {year} / {player_type} / {game_type}]", file=sys.stderr)
 
         # 1. App stats
         app_raw = _fetch_app_stats(
             player, year, player_type,
+            game_type=game_type,
             offline=offline, record=record_fixtures,
         )
         if app_raw is None:
             print(f"  [SKIP] Could not fetch app stats for {player.name}", file=sys.stderr)
             continue
+
+        # Extract diagnostic metadata before normalizing
+        pa_by_game_type: dict[str, int] = app_raw.get("_pa_by_game_type", {})
+
         app_stats = _normalize_source_dict(app_raw, "app")
         sample_notes = _extract_sample_notes(app_raw)
 
-        # 2. External sources
+        # 2. External sources (only those that support the requested scope)
         source_dicts: dict[str, dict[str, Any]] = {}
         for src in EXTERNAL_SOURCES:
             raw = _fetch_with_fixture_support(
                 src, player, year, player_type,
+                game_type=game_type,
                 offline=offline, record=record_fixtures,
+                verbose=verbose,
             )
             if raw is not None:
                 source_dicts[src.source_name] = _normalize_source_dict(raw, src.source_name)
 
         if not source_dicts:
-            print(
-                f"  [WARN] No external sources returned data for {player.name}; skipping.",
-                file=sys.stderr,
-            )
-            continue
+            if verbose:
+                print(
+                    f"  [WARN] No external sources returned data for {player.name} "
+                    f"(scope={game_type!r}); building report with app-only data.",
+                    file=sys.stderr,
+                )
 
         # 3. Compare
         sample_pa = sample_notes.get("PA") or sample_notes.get("approx_PA")
@@ -331,23 +435,39 @@ def run_verification(
             player_type=player_type,
         )
 
+        # 4. Scope-mismatch post-processing:
+        #    If any non-regular game rows were present in the raw Statcast data
+        #    (e.g. game_type column was absent so filter couldn't apply), downgrade
+        #    PA/counting FAILs to SCOPE_MISMATCH with an explanatory note.
+        if game_type == "regular" and pa_by_game_type:
+            comparisons = _apply_scope_mismatch_verdicts(comparisons, pa_by_game_type)
+
         report = PlayerReport(
             player=player,
             year=year,
             player_type=player_type,
+            game_type=game_type,
             comparisons=comparisons,
             sample_notes=sample_notes,
+            pa_by_game_type=pa_by_game_type,
         )
         reports.append(report)
 
         if verbose:
             fails = [c for c in comparisons if c.verdict == "FAIL"]
             warns = [c for c in comparisons if c.verdict == "WARN"]
+            scope_mm = [c for c in comparisons if c.verdict == "SCOPE_MISMATCH"]
             print(
                 f"  → FAIL: {len(fails)}  WARN: {len(warns)}  "
+                f"SCOPE_MISMATCH: {len(scope_mm)}  "
                 f"Total: {len(comparisons)}",
                 file=sys.stderr,
             )
+            if pa_by_game_type:
+                breakdown = "  ".join(
+                    f"{gt}={n}" for gt, n in sorted(pa_by_game_type.items())
+                )
+                print(f"  PA by game_type: {breakdown}", file=sys.stderr)
 
     return reports
 
@@ -359,6 +479,7 @@ def run_verification(
 
 def run_golden_set_verification(
     *,
+    game_type: str = "regular",
     offline: bool = True,
     record_fixtures: bool = False,
     verbose: bool = False,
@@ -366,6 +487,12 @@ def run_golden_set_verification(
     """Run verification for the built-in golden player set.
 
     This is what ``pytest tests/test_stat_verification.py`` calls.
+
+    Parameters
+    ----------
+    game_type:
+        ``"regular"`` (default), ``"postseason"``, or ``"all"``.
+        Sources that don't support the scope are silently skipped.
     """
     batter_players = {
         592450: GOLDEN_PLAYERS["Aaron Judge 2024"],
@@ -388,6 +515,7 @@ def run_golden_set_verification(
             year=2024,
             player_type="batter",
             player_identities=batter_players,
+            game_type=game_type,
             offline=offline,
             record_fixtures=record_fixtures,
             verbose=verbose,
@@ -399,6 +527,7 @@ def run_golden_set_verification(
             year=2023,
             player_type="pitcher",
             player_identities=pitcher_players_2023,
+            game_type=game_type,
             offline=offline,
             record_fixtures=record_fixtures,
             verbose=verbose,
@@ -410,6 +539,7 @@ def run_golden_set_verification(
             year=2021,
             player_type="pitcher",
             player_identities=pitcher_players_2021,
+            game_type=game_type,
             offline=offline,
             record_fixtures=record_fixtures,
             verbose=verbose,

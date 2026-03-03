@@ -27,7 +27,7 @@ from typing import Any, Literal
 from tools.verification.stat_map import STAT_MAP, StatMapping
 
 
-Verdict = Literal["PASS", "FAIL", "WARN", "SKIP", "NON_VERIFIABLE"]
+Verdict = Literal["PASS", "FAIL", "WARN", "SKIP", "NON_VERIFIABLE", "SCOPE_MISMATCH"]
 
 # Minimum samples — comparisons skip below these thresholds
 MIN_BATTER_PA = 30

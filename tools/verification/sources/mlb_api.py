@@ -92,8 +92,14 @@ class MLBApiSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
+        if game_type != "regular":
+            raise SourceError(
+                f"MLBApiSource only supports 'regular' scope; "
+                f"requested {game_type!r} — SKIP"
+            )
         if offline:
             raise SourceError("MLBApiSource: offline mode requires fixture")
 
@@ -121,8 +127,14 @@ class MLBApiSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
+        if game_type != "regular":
+            raise SourceError(
+                f"MLBApiSource only supports 'regular' scope; "
+                f"requested {game_type!r} — SKIP"
+            )
         if offline:
             raise SourceError("MLBApiSource: offline mode requires fixture")
 

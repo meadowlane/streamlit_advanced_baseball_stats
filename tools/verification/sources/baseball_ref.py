@@ -104,8 +104,14 @@ class BaseballRefSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
+        if game_type != "regular":
+            raise SourceError(
+                f"BaseballRefSource only supports 'regular' scope; "
+                f"requested {game_type!r} — SKIP"
+            )
         if offline:
             raise SourceError("BaseballRefSource: offline mode requires fixture")
 
@@ -175,8 +181,14 @@ class BaseballRefSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
+        if game_type != "regular":
+            raise SourceError(
+                f"BaseballRefSource only supports 'regular' scope; "
+                f"requested {game_type!r} — SKIP"
+            )
         if offline:
             raise SourceError("BaseballRefSource: offline mode requires fixture")
 
