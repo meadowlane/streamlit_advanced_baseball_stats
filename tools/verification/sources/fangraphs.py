@@ -135,7 +135,6 @@ def _build_stat_dict(
             continue
         raw = row[col]
         try:
-            import math
             if pd.isna(raw):
                 continue
         except (TypeError, ValueError):

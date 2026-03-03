@@ -52,7 +52,6 @@ from tools.verification.reporting import PlayerReport
 from tools.verification.fixtures import (
     save_fixture,
     load_fixture,
-    fixture_exists,
     FixtureNotFoundError,
 )
 from tools.verification.normalization import normalize_stat

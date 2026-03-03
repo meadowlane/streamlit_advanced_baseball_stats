@@ -26,22 +26,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-import pybaseball as pb  # type: ignore[import-untyped]  # noqa: E402
 
 from data.fetcher import _fetch_statcast_batter, _fetch_statcast_pitcher  # noqa: E402
 from stats.splits import (  # noqa: E402
     _compute_stats,
     _compute_all_pitcher_stats,
-    WOBA_WEIGHTS,
-    PA_EVENTS,
-    BATTED_BALL_EVENTS,
-    K_EVENTS,
-    CSW_DESCRIPTIONS,
-    WHIFF_DESCRIPTIONS,
-    SWING_DESCRIPTIONS,
-    FIRST_STRIKE_DESCRIPTIONS,
-    HARD_HIT_MPH,
-    BARREL_CODE,
 )
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
@@ -143,7 +132,6 @@ class StatcastSource(BaseSource):
     def _compute_fbv(df: Any) -> float | None:
         """Return mean fastball velocity from pitch-level Statcast data."""
         try:
-            import pandas as pd
             if "pitch_type" not in df.columns or "release_speed" not in df.columns:
                 return None
             fb_df = df[df["pitch_type"].isin(_FB_CODES) & df["release_speed"].notna()]

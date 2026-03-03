@@ -32,10 +32,8 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from tools.verification.engine import (  # noqa: E402
-    GOLDEN_PLAYERS,
     run_golden_set_verification,
     run_verification,
-    EXTERNAL_SOURCES,
 )
 from tools.verification.reporting import write_report  # noqa: E402
 from tools.verification.sources.base import PlayerIdentity  # noqa: E402
@@ -225,7 +223,7 @@ def _lookup_players_by_name(
     for target_name in names:
         name_lower = target_name.lower()
         if "Name" not in df.columns:
-            print(f"[WARN] FanGraphs data has no 'Name' column", file=sys.stderr)
+            print("[WARN] FanGraphs data has no 'Name' column", file=sys.stderr)
             continue
         matches = df[df["Name"].str.lower() == name_lower]
         if matches.empty:

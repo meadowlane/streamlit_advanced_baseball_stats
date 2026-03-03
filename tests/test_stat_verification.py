@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -59,8 +58,6 @@ from tools.verification.comparison import StatComparison
 from tools.verification.game_scope import (
     filter_by_scope,
     pa_breakdown_by_game_type,
-    REGULAR_GAME_TYPES,
-    POSTSEASON_GAME_TYPES,
     SOURCE_SCOPE_SUPPORT,
 )
 
@@ -577,7 +574,6 @@ class TestGameScope:
         except ImportError:
             pytest.skip("stats.splits not importable in this environment")
 
-        import pandas as pd
 
         df = self._make_soto_like_df()
         regular_df = filter_by_scope(df, "regular")
