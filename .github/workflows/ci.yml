@@ -23,8 +23,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -r requirements.txt
-      - run: ruff check tests stats data ui
-      - run: ruff format --check tests stats data ui
+      - run: ruff check tests stats data ui tools
+      - run: ruff format --check tests stats data ui tools
 
   typecheck:
     name: Type check (mypy)
@@ -37,7 +37,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -r requirements.txt
-      - run: mypy stats/ data/ ui/
+      - run: mypy stats/ data/ ui/ tools/
 
   test:
     name: Tests + Coverage
@@ -50,15 +50,20 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Run test suite (not slow)
+      - name: Run test suite (not slow, not online)
         run: |
           python -m pytest tests/ \
-            -m "not slow" \
-            --cov=stats --cov=data --cov=ui \
+            -m "not slow and not online" \
+            --cov=stats --cov=data --cov=ui --cov=tools \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-fail-under=50 \
             -q
+      - name: Stat verification — offline golden set
+        run: |
+          python -m pytest tests/test_stat_verification.py \
+            -m "not slow and not online" \
+            -v --tb=short
       - uses: actions/upload-artifact@v4
         if: always()
         with:

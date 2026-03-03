@@ -76,16 +76,16 @@ SPLIT_TYPE_MAP = {
 
 CORE_STATS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 BATTER_EXTRA_STATS = ["wRC+"]
-TRADITIONAL_STATS = ["AVG", "OBP", "SLG", "OPS"]
+TRADITIONAL_STATS = ["AVG", "OBP", "SLG", "OPS", "HR", "RBI"]
 BATTER_STAT_ORDER = BATTER_EXTRA_STATS + CORE_STATS
 BATTER_DEFAULT_STATS = BATTER_STAT_ORDER.copy()
 
 # Pitcher stats are ordered by MLB-evaluation priority:
 # run prevention -> dominance/control -> quality of contact -> stuff/arsenal.
 PITCHER_RUN_PREVENTION_STATS = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
-PITCHER_DOMINANCE_STATS = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+PITCHER_DOMINANCE_STATS = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%", "SO"]
 PITCHER_CONTACT_STATS = ["HardHit%", "Barrel%", "GB%", "FB%", "EV", "LA"]
-PITCHER_STUFF_STATS = ["FBv", "FirstStrike%"]
+PITCHER_STUFF_STATS = ["FBv", "FirstStrike%", "Stuff+", "Location+", "Pitching+"]
 PITCHER_STAT_ORDER = (
     PITCHER_RUN_PREVENTION_STATS
     + PITCHER_DOMINANCE_STATS
@@ -94,11 +94,11 @@ PITCHER_STAT_ORDER = (
 )
 # --- Pitcher Tier 2 (always visible, two labeled groups) ---
 PITCHER_TIER2_OUTCOME = ["ERA", "FIP", "xFIP", "SIERA", "xERA", "wOBA", "xwOBA"]
-PITCHER_TIER2_DOMINANCE = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%"]
+PITCHER_TIER2_DOMINANCE = ["K%", "BB%", "K-BB%", "Whiff%", "CSW%", "SO"]
 
 # --- Pitcher Tier 3 (behind expander) ---
 PITCHER_TIER3_CONTACT = ["HardHit%", "Barrel%", "GB%"]
-PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%"]
+PITCHER_TIER3_STUFF = ["EV", "LA", "FBv", "FirstStrike%", "Stuff+", "Location+", "Pitching+"]
 PITCHER_TIER3_STATS = PITCHER_TIER3_CONTACT + PITCHER_TIER3_STUFF
 
 # --- Batter Tiers ---
@@ -122,6 +122,10 @@ PITCHER_SEASON_ONLY_STAT_COLS: dict[str, list[str]] = {
     "EV": ["EV", "EVv"],
     "LA": ["LA"],
     "FBv": ["FBv", "FB Velo", "FBv (mph)"],
+    "SO": ["SO"],
+    "Stuff+": ["Stuff+"],
+    "Location+": ["Location+"],
+    "Pitching+": ["Pitching+"],
 }
 PITCHER_SEASON_ONLY_STATS = frozenset(PITCHER_SEASON_ONLY_STAT_COLS.keys())
 PITCHER_PERCENT_STATS = frozenset(
@@ -433,7 +437,7 @@ def _normalize_pitcher_stat_value(stat: str, value: float | None) -> float | Non
     out = float(value)
     if stat in PITCHER_PERCENT_STATS and abs(out) <= 1.0:
         out *= 100.0
-    if stat in {"W", "L"}:
+    if stat in {"W", "L", "SO", "Stuff+", "Location+", "Pitching+"}:
         return float(int(round(out)))
     if stat == "IP":
         return round(out, 1)
@@ -576,6 +580,38 @@ def _render_batter_headline_md(player_row: "pd.Series | None", sample_text: str 
         )
     if sample_text is not None:
         st.caption(f"Sample size: {sample_text}")
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_player_handedness(mlbam_id: int) -> dict:
+    """Return {'bats': str|None, 'throws': str|None} from MLB Stats API. Cached 24 h."""
+    import requests as _req  # already installed as transitive dep of pybaseball
+    _CODE = {"L": "Left", "R": "Right", "S": "Both", "B": "Both"}
+    try:
+        url = f"https://statsapi.mlb.com/api/v1/people/{mlbam_id}"
+        person = _req.get(url, timeout=5).json().get("people", [{}])[0]
+        return {
+            "bats": _CODE.get((person.get("batSide") or {}).get("code", ""), None),
+            "throws": _CODE.get((person.get("pitchHand") or {}).get("code", ""), None),
+        }
+    except Exception:
+        return {"bats": None, "throws": None}
+
+
+def _render_handedness_md(mlbam_id: int) -> None:
+    """Render 'Throws: X  Bats: Y' on its own line between player name and team/year."""
+    h = _get_player_handedness(mlbam_id)
+    parts = []
+    if h.get("throws"):
+        parts.append(f"Throws: {h['throws']}")
+    if h.get("bats"):
+        parts.append(f"Bats: {h['bats']}")
+    if parts:
+        st.markdown(
+            f'<p style="font-size:14px;color:rgba(255,255,255,0.5);margin:-4px 0 2px">'
+            f"{'  '.join(parts)}</p>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_subheading_md(team: str, season: int) -> None:
@@ -1628,30 +1664,36 @@ if comparison_mode and team_b is not None:
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
+            _render_handedness_md(mlbam_id)
             _render_subheading_md(team, season_a)
             _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
+            _render_handedness_md(mlbam_id_b)
             _render_subheading_md(team_b, season_b)
             _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats_b))
     else:
         header_col_a, header_col_b = st.columns(2)
         with header_col_a:
             st.markdown(f"**{selected_name}**")
+            _render_handedness_md(mlbam_id)
             _render_subheading_md(team, season_a)
             _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
         with header_col_b:
             st.markdown(f"**{selected_name_b}**")
+            _render_handedness_md(mlbam_id_b)
             _render_subheading_md(team_b, season_b)
             sample_text_b = _sample_size_text(sample_sizes_b, player_type) if sample_sizes_b is not None else None
             _render_batter_headline_md(player_row_b, sample_text_b)
 else:
     if player_type == "Pitcher":
         st.subheader(selected_name)
+        _render_handedness_md(mlbam_id)
         _render_subheading_md(team, season_a)
         _render_headline_md(_format_pitcher_headline_line(pitcher_season_stats))
     else:
         st.subheader(selected_name)
+        _render_handedness_md(mlbam_id)
         _render_subheading_md(team, season_a)
         _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
 
@@ -1728,7 +1770,7 @@ if (
     and traditional_color_tiers is not None
 ):
     _render_section_heading("Traditional Stats", top_margin_px=18)
-    st.caption("Slash line + OPS (percentiles vs qualified hitters).")
+    st.caption("Slash line + OPS, HR, RBI (percentiles vs qualified hitters).")
     if (
         comparison_mode
         and traditional_stats_b is not None
