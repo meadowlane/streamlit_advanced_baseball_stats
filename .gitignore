@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# pybaseball cache
+.pybaseball/
+
+# Editors / OS
+.DS_Store
+*.swp
+*.swo
