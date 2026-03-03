@@ -35,6 +35,7 @@ class PlayerReport:
     player_type: str
     comparisons: list[StatComparison] = field(default_factory=list)
     sample_notes: dict[str, int | float | None] = field(default_factory=dict)
+    game_type: str = "regular"
     # e.g. {"PA": 650, "BIP": 480, "N_pitches": 2200}
 
 
@@ -125,9 +126,14 @@ def _text_report(reports: list[PlayerReport]) -> str:
     total = sum(counts.values())
     pass_pct = 100.0 * counts["PASS"] / total if total else 0.0
 
+    # Derive game_type from reports (may vary per set)
+    game_types = sorted({r.game_type for r in reports})
+    game_type_str = ", ".join(game_types) if game_types else "regular"
+
     lines.append("=" * 70)
     lines.append("  BASEBALL STATS VERIFICATION REPORT")
     lines.append("=" * 70)
+    lines.append(f"  Season scope: {game_type_str}")
     lines.append(
         f"  Players: {len(reports)}  |  "
         f"Total checks: {total}  |  "
@@ -136,6 +142,10 @@ def _text_report(reports: list[PlayerReport]) -> str:
         f"WARN: {counts['WARN']}  |  "
         f"SKIP: {counts['SKIP']}  |  "
         f"NON_VER: {counts['NON_VERIFIABLE']}"
+    )
+    lines.append(
+        "  Note: PASS/FAIL based on independent sources only.  "
+        "StatcastSource is shown as [info] — not counted toward verdicts."
     )
     lines.append("=" * 70)
     lines.append("")
@@ -160,21 +170,26 @@ def _text_report(reports: list[PlayerReport]) -> str:
     for rep in reports:
         lines.append(f"{'─'*70}")
         lines.append(
-            f"  {rep.player.name}  |  {rep.year}  |  {rep.player_type.upper()}"
+            f"  {rep.player.name}  |  {rep.year}  |  {rep.player_type.upper()}  "
+            f"|  scope={rep.game_type}"
         )
         sample_str = ", ".join(f"{k}={v}" for k, v in rep.sample_notes.items() if v is not None)
         if sample_str:
             lines.append(f"  Sample: {sample_str}")
         lines.append("")
-        lines.append(f"  {'Stat':<14} {'Ours':>8} {'Sources':<38} {'V':>4}  Note")
-        lines.append(f"  {'-'*14} {'-'*8} {'-'*38} {'-'*4}  {'-'*20}")
+        lines.append(f"  {'Stat':<14} {'Ours':>8} {'Sources':<44} {'V':>4}  Note")
+        lines.append(f"  {'-'*14} {'-'*8} {'-'*44} {'-'*4}  {'-'*20}")
         for cmp in rep.comparisons:
-            src_str = "  ".join(
-                f"{k}={_fmt(v)}" for k, v in cmp.source_values.items() if v is not None
-            )
+            info_set = set(getattr(cmp, "info_only_sources", []))
+            src_parts = []
+            for k, v in cmp.source_values.items():
+                if v is not None:
+                    tag = "[i]" if k in info_set else ""
+                    src_parts.append(f"{k}{tag}={_fmt(v)}")
+            src_str = "  ".join(src_parts)
             note_str = (cmp.note or cmp.non_verifiable_reason or "")[:40]
             lines.append(
-                f"  {cmp.stat:<14} {_fmt(cmp.our_value):>8} {src_str:<38} "
+                f"  {cmp.stat:<14} {_fmt(cmp.our_value):>8} {src_str:<44} "
                 f"{_verdict_emoji(cmp.verdict):>4}  {note_str}"
             )
         lines.append("")

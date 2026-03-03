@@ -93,7 +93,13 @@ def _safe_pct(
 
 
 class BaseballRefSource(BaseSource):
-    """Fetches stats from Baseball Reference via pybaseball."""
+    """Fetches stats from Baseball Reference via pybaseball.
+
+    All parsing errors are caught and converted to :class:`SourceError` so that
+    BRef failures never crash the run.  A BRef failure is reported as a WARN in
+    the output and the source is excluded from verdicts rather than counted as a
+    FAIL.
+    """
 
     @property
     def source_name(self) -> str:
@@ -109,6 +115,20 @@ class BaseballRefSource(BaseSource):
         if offline:
             raise SourceError("BaseballRefSource: offline mode requires fixture")
 
+        try:
+            return self._get_batter_season_inner(player, year)
+        except SourceError:
+            raise
+        except Exception as exc:
+            raise SourceError(
+                f"BRef batter parsing failed for {player.name}/{year}: {exc}"
+            ) from exc
+
+    def _get_batter_season_inner(
+        self,
+        player: PlayerIdentity,
+        year: int,
+    ) -> dict[str, Any]:
         pb.cache.enable()
         try:
             df = pb.batting_stats_bref(year)
@@ -180,6 +200,20 @@ class BaseballRefSource(BaseSource):
         if offline:
             raise SourceError("BaseballRefSource: offline mode requires fixture")
 
+        try:
+            return self._get_pitcher_season_inner(player, year)
+        except SourceError:
+            raise
+        except Exception as exc:
+            raise SourceError(
+                f"BRef pitcher parsing failed for {player.name}/{year}: {exc}"
+            ) from exc
+
+    def _get_pitcher_season_inner(
+        self,
+        player: PlayerIdentity,
+        year: int,
+    ) -> dict[str, Any]:
         pb.cache.enable()
         try:
             df = pb.pitching_stats_bref(year)

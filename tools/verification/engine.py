@@ -21,6 +21,16 @@ For each player the engine:
 4. Calls :func:`compare_all_stats` with tolerance rules.
 5. Returns :class:`PlayerReport` objects for the reporting layer.
 
+Independent sources
+-------------------
+``StatcastSource`` reuses the app's own computation code and is therefore **not
+independent** (``is_independent = False``).  The engine automatically builds
+``independent_source_names`` from the ``is_independent`` attribute on each
+source and passes it to the comparison layer.  This ensures:
+
+- PASS/FAIL verdicts are based only on truly independent external sources.
+- StatcastSource results appear in the report as an informational cross-check.
+
 Fixture strategy
 ----------------
 * ``record_fixtures=True`` — fetches live and writes JSON to
@@ -37,7 +47,7 @@ import sys
 from pathlib import Path
 from typing import Any, Literal
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
@@ -117,12 +127,19 @@ GOLDEN_PLAYERS: dict[str, PlayerIdentity] = {
 # ---------------------------------------------------------------------------
 
 #: All external sources consulted by the engine (not including AppSource).
+#: These instances are used as prototypes; ``run_verification`` may pass
+#: ``game_type`` as a kwarg to each source's fetch method.
 EXTERNAL_SOURCES: list[BaseSource] = [
     FanGraphsSource(),
     StatcastSource(),
     MLBApiSource(),
     BaseballRefSource(),
 ]
+
+
+def _build_independent_source_names(sources: list[BaseSource]) -> frozenset[str]:
+    """Return the set of source names that are flagged as independent."""
+    return frozenset(s.source_name for s in sources if s.is_independent)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +155,7 @@ def _fetch_with_fixture_support(
     *,
     offline: bool,
     record: bool,
+    game_type: str = "regular",
 ) -> dict[str, Any] | None:
     """Fetch stats from *source*, using/writing fixtures as instructed.
 
@@ -155,15 +173,29 @@ def _fetch_with_fixture_support(
 
     # --- Live fetch ---
     try:
+        kwargs: dict[str, Any] = {"game_type": game_type}
         if player_type == "batter":
-            data = source.get_batter_season(player, year)
+            data = source.get_batter_season(player, year, **kwargs)
         else:
-            data = source.get_pitcher_season(player, year)
+            data = source.get_pitcher_season(player, year, **kwargs)
+    except TypeError:
+        # Source doesn't accept game_type kwarg — call without it
+        try:
+            if player_type == "batter":
+                data = source.get_batter_season(player, year)
+            else:
+                data = source.get_pitcher_season(player, year)
+        except SourceError as exc:
+            print(f"  [WARN] {src}: {exc}", file=sys.stderr)
+            return None
+        except Exception as exc:
+            print(f"  [WARN] {src} unexpected error: {exc}", file=sys.stderr)
+            return None
     except SourceError as exc:
         print(f"  [WARN] {src}: {exc}", file=sys.stderr)
         return None
     except Exception as exc:
-        print(f"  [ERROR] {src} unexpected error: {exc}", file=sys.stderr)
+        print(f"  [WARN] {src} unexpected error: {exc}", file=sys.stderr)
         return None
 
     # --- Record fixture ---
@@ -181,6 +213,7 @@ def _fetch_app_stats(
     *,
     offline: bool,
     record: bool,
+    game_type: str = "regular",
 ) -> dict[str, Any] | None:
     """Fetch the app's own stats (with fixture support for the app source)."""
     src_name = "app"
@@ -194,10 +227,21 @@ def _fetch_app_stats(
 
     app = AppSource()
     try:
+        kwargs: dict[str, Any] = {"game_type": game_type}
         if player_type == "batter":
-            data = app.get_batter_season(player, year)
+            data = app.get_batter_season(player, year, **kwargs)
         else:
-            data = app.get_pitcher_season(player, year)
+            data = app.get_pitcher_season(player, year, **kwargs)
+    except TypeError:
+        # AppSource doesn't yet accept game_type — call without it
+        try:
+            if player_type == "batter":
+                data = app.get_batter_season(player, year)
+            else:
+                data = app.get_pitcher_season(player, year)
+        except SourceError as exc:
+            print(f"  [WARN] AppSource: {exc}", file=sys.stderr)
+            return None
     except SourceError as exc:
         print(f"  [WARN] AppSource: {exc}", file=sys.stderr)
         return None
@@ -247,6 +291,7 @@ def run_verification(
     offline: bool = False,
     record_fixtures: bool = False,
     verbose: bool = False,
+    game_type: str = "regular",
 ) -> list[PlayerReport]:
     """Verify stats for a list of MLBAM player IDs.
 
@@ -270,7 +315,16 @@ def run_verification(
         Fetch live and write fixtures.  Implies online mode.
     verbose:
         Print progress to stderr.
+    game_type:
+        Season scope: ``"regular"`` (default) or ``"all"``.
+        FanGraphs and BRef always return regular-season only.
+        Statcast data is filtered to ``game_type == 'R'`` when this is
+        ``"regular"``.  MLB API uses ``gameType=R``.
+        If ``"all"`` is requested, Statcast data is not filtered and a note
+        is added to the report.
     """
+    independent_names = _build_independent_source_names(EXTERNAL_SOURCES)
+
     reports: list[PlayerReport] = []
 
     for mlbam_id in player_ids:
@@ -282,12 +336,13 @@ def run_verification(
             player = PlayerIdentity(name=str(mlbam_id), mlbam_id=mlbam_id)
 
         if verbose:
-            print(f"\n[{player.name} / {year} / {player_type}]", file=sys.stderr)
+            print(f"\n[{player.name} / {year} / {player_type} / game_type={game_type}]",
+                  file=sys.stderr)
 
         # 1. App stats
         app_raw = _fetch_app_stats(
             player, year, player_type,
-            offline=offline, record=record_fixtures,
+            offline=offline, record=record_fixtures, game_type=game_type,
         )
         if app_raw is None:
             print(f"  [SKIP] Could not fetch app stats for {player.name}", file=sys.stderr)
@@ -300,7 +355,7 @@ def run_verification(
         for src in EXTERNAL_SOURCES:
             raw = _fetch_with_fixture_support(
                 src, player, year, player_type,
-                offline=offline, record=record_fixtures,
+                offline=offline, record=record_fixtures, game_type=game_type,
             )
             if raw is not None:
                 source_dicts[src.source_name] = _normalize_source_dict(raw, src.source_name)
@@ -312,7 +367,7 @@ def run_verification(
             )
             continue
 
-        # 3. Compare
+        # 3. Compare — only independent sources affect verdicts
         sample_pa = sample_notes.get("PA") or sample_notes.get("approx_PA")
         sample_ip_raw = sample_notes.get("IP")
         sample_ip: float | None = None
@@ -329,6 +384,7 @@ def run_verification(
             sample_pa=int(sample_pa) if sample_pa is not None else None,
             sample_ip=sample_ip,
             player_type=player_type,
+            independent_sources=independent_names,
         )
 
         report = PlayerReport(
@@ -337,15 +393,17 @@ def run_verification(
             player_type=player_type,
             comparisons=comparisons,
             sample_notes=sample_notes,
+            game_type=game_type,
         )
         reports.append(report)
 
         if verbose:
             fails = [c for c in comparisons if c.verdict == "FAIL"]
             warns = [c for c in comparisons if c.verdict == "WARN"]
+            non_ver = [c for c in comparisons if c.verdict == "NON_VERIFIABLE"]
             print(
                 f"  → FAIL: {len(fails)}  WARN: {len(warns)}  "
-                f"Total: {len(comparisons)}",
+                f"NON_VER: {len(non_ver)}  Total: {len(comparisons)}",
                 file=sys.stderr,
             )
 
@@ -362,6 +420,7 @@ def run_golden_set_verification(
     offline: bool = True,
     record_fixtures: bool = False,
     verbose: bool = False,
+    game_type: str = "regular",
 ) -> list[PlayerReport]:
     """Run verification for the built-in golden player set.
 
@@ -391,6 +450,7 @@ def run_golden_set_verification(
             offline=offline,
             record_fixtures=record_fixtures,
             verbose=verbose,
+            game_type=game_type,
         )
     )
     all_reports.extend(
@@ -402,6 +462,7 @@ def run_golden_set_verification(
             offline=offline,
             record_fixtures=record_fixtures,
             verbose=verbose,
+            game_type=game_type,
         )
     )
     all_reports.extend(
@@ -413,6 +474,7 @@ def run_golden_set_verification(
             offline=offline,
             record_fixtures=record_fixtures,
             verbose=verbose,
+            game_type=game_type,
         )
     )
 

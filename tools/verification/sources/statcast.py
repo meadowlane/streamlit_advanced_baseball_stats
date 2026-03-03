@@ -1,19 +1,30 @@
-"""Statcast source adapter — independent re-fetch and re-compute.
+"""Statcast source adapter — consistency re-fetch and re-compute.
 
 This adapter re-fetches raw Statcast data via pybaseball and recomputes
 Statcast-derived stats using the **same functions** as the app
 (``stats.splits._compute_stats``, ``_compute_all_pitcher_stats``).
 
-Design note
------------
-Because this adapter uses the same computation code as the app, it is a
-**consistency check**, not fully independent verification.  It validates that:
+Design note — NOT independent
+------------------------------
+Because this adapter uses the same computation code as the app, it is **not**
+an independent verification source (``is_independent = False``).  It validates:
+
 1. The raw Statcast data round-trips correctly (no filtering bugs).
 2. The computation results are stable between calls.
 3. The FanGraphs wOBA column matches the in-app Statcast computation.
 
 Any discrepancy between AppSource and StatcastSource for the *same* player
-indicates a data-ordering or caching issue, not a formula bug.
+indicates a data-ordering or caching issue, not a formula bug.  The comparison
+engine excludes StatcastSource from PASS/FAIL verdict counts; it is shown in
+the report as an informational cross-check only.
+
+Game type / regular-season filtering
+-------------------------------------
+When ``game_type="regular"`` (the default), the Statcast DataFrame is filtered
+to rows where ``game_type == 'R'`` **before** stats are computed.  This ensures
+PA counts match FanGraphs and the MLB Stats API (both regular-season only).
+The raw fetch covers ``{year}-03-01`` through ``{year}-11-30`` to capture the
+full regular season plus playoffs; filtering happens in memory.
 """
 
 from __future__ import annotations
@@ -50,13 +61,30 @@ from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceEr
 _FB_CODES = frozenset(["FF", "FA", "FT", "SI"])
 
 
+def _filter_regular_season(df: Any) -> Any:
+    """Filter a Statcast DataFrame to regular-season rows (game_type == 'R').
+
+    If the DataFrame has no ``game_type`` column (older Statcast schemas), the
+    unfiltered DataFrame is returned with a note — callers should be aware that
+    PA may include non-regular-season games in that case.
+    """
+    if df is None or df.empty:
+        return df
+    if "game_type" not in df.columns:
+        # Column absent — cannot filter; return as-is
+        return df
+    return df[df["game_type"] == "R"].copy()
+
+
 class StatcastSource(BaseSource):
     """Re-fetches Statcast data and recomputes all Statcast-derived stats.
 
-    Calling ``get_batter_season`` or ``get_pitcher_season`` on this adapter
-    exercises the exact same computation path as the app.  Any differences
-    from ``AppSource`` are bugs in the pipeline (caching, field ordering, etc.).
+    This adapter is **not independent** (``is_independent = False``).  See
+    module docstring for details.
     """
+
+    #: Not independent — reuses the same code path as AppSource.
+    is_independent: bool = False
 
     @property
     def source_name(self) -> str:
@@ -68,6 +96,7 @@ class StatcastSource(BaseSource):
         year: int,
         *,
         offline: bool = False,
+        game_type: str = "regular",
     ) -> dict[str, Any]:
         if offline:
             raise SourceError("StatcastSource: offline mode requires fixture")
@@ -79,6 +108,13 @@ class StatcastSource(BaseSource):
 
         if df.empty:
             raise SourceError(f"No Statcast data for batter {player.mlbam_id} in {year}")
+
+        if game_type == "regular":
+            df = _filter_regular_season(df)
+            if df.empty:
+                raise SourceError(
+                    f"No regular-season Statcast data for batter {player.mlbam_id} in {year}"
+                )
 
         computed = _compute_stats(df, player_type="Batter")
 
@@ -96,6 +132,7 @@ class StatcastSource(BaseSource):
         year: int,
         *,
         offline: bool = False,
+        game_type: str = "regular",
     ) -> dict[str, Any]:
         if offline:
             raise SourceError("StatcastSource: offline mode requires fixture")
@@ -107,6 +144,13 @@ class StatcastSource(BaseSource):
 
         if df.empty:
             raise SourceError(f"No Statcast data for pitcher {player.mlbam_id} in {year}")
+
+        if game_type == "regular":
+            df = _filter_regular_season(df)
+            if df.empty:
+                raise SourceError(
+                    f"No regular-season Statcast data for pitcher {player.mlbam_id} in {year}"
+                )
 
         computed = _compute_all_pitcher_stats(df)
         result: dict[str, Any] = dict(computed)

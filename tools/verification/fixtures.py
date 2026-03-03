@@ -26,8 +26,25 @@ from typing import Any
 # Fixture directory — relative to the project root
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-FIXTURE_DIR = _PROJECT_ROOT / "tests" / "verification_fixtures"
+# fixtures.py lives at: <project_root>/tools/verification/fixtures.py
+# parents[0] = tools/verification/
+# parents[1] = tools/
+# parents[2] = <project_root>  ← correct
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_FIXTURE_DIR = _PROJECT_ROOT / "tests" / "verification_fixtures"
+
+# Module-level fixture dir; override via set_fixture_root() or --fixture-root CLI flag
+FIXTURE_DIR: Path = _DEFAULT_FIXTURE_DIR
+
+
+def set_fixture_root(path: str | Path) -> None:
+    """Override the fixture root directory (e.g. from ``--fixture-root`` CLI flag).
+
+    Must be called before any :func:`fixture_path` / :func:`save_fixture` /
+    :func:`load_fixture` calls take effect.
+    """
+    global FIXTURE_DIR
+    FIXTURE_DIR = Path(path).resolve()
 
 
 class FixtureNotFoundError(FileNotFoundError):

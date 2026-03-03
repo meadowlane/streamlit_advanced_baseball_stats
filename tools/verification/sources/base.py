@@ -50,7 +50,19 @@ class BaseSource(ABC):
     the harness (see :mod:`tools.verification.stat_map`).  Missing stats are
     simply omitted from the dict — callers must handle ``KeyError`` /
     ``dict.get`` defensively.
+
+    Independence
+    ------------
+    ``is_independent = True`` (default) means this source uses a data pipeline
+    that is entirely separate from the app's own computation.  Sources where
+    ``is_independent = False`` (currently :class:`StatcastSource`) rerun the
+    same code path as the app — they are **consistency checks**, not additional
+    independent confirmations.  The comparison engine only counts independent
+    sources when deciding PASS / FAIL verdicts.
     """
+
+    #: Set to False for sources that reuse the app's own computation code.
+    is_independent: bool = True
 
     @property
     @abstractmethod
