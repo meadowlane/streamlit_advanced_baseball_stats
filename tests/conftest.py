@@ -13,6 +13,53 @@ import pandas as pd
 import pytest
 
 
+# ---------------------------------------------------------------------------
+# pytest markers: online / slow
+# ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-online",
+        action="store_true",
+        default=False,
+        help="Run tests that require live network access (marked @pytest.mark.online).",
+    )
+    parser.addoption(
+        "--run-slow",
+        action="store_true",
+        default=False,
+        help="Run tests marked @pytest.mark.slow.",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "online: marks tests that require live network access (skip unless --run-online)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "slow: marks tests that are slow (skip unless --run-slow)",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    if not config.getoption("--run-online"):
+        skip_online = pytest.mark.skip(reason="Requires --run-online flag")
+        for item in items:
+            if "online" in item.keywords:
+                item.add_marker(skip_online)
+    if not config.getoption("--run-slow"):
+        skip_slow = pytest.mark.skip(reason="Requires --run-slow flag")
+        for item in items:
+            if "slow" in item.keywords:
+                item.add_marker(skip_slow)
+
+
 def _expand(value: object, n: int) -> list[object]:
     if isinstance(value, list):
         if not value:
