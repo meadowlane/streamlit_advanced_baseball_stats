@@ -13,7 +13,7 @@ import csv
 import io
 import json
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,9 +33,12 @@ class PlayerReport:
     player: PlayerIdentity
     year: int
     player_type: str
+    game_type: str = "regular"
     comparisons: list[StatComparison] = field(default_factory=list)
     sample_notes: dict[str, int | float | None] = field(default_factory=dict)
     # e.g. {"PA": 650, "BIP": 480, "N_pitches": 2200}
+    pa_by_game_type: dict[str, int] = field(default_factory=dict)
+    # e.g. {"R": 713, "F": 15, "D": 22, "L": 64} — from unfiltered Statcast data
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +53,7 @@ def _verdict_emoji(verdict: str) -> str:
         "WARN": "~",
         "SKIP": "-",
         "NON_VERIFIABLE": "?",
+        "SCOPE_MISMATCH": "⚠",
     }.get(verdict, "?")
 
 
@@ -107,7 +111,10 @@ def top_discrepancies(
 
 
 def verdict_counts(reports: list[PlayerReport]) -> dict[str, int]:
-    counts: dict[str, int] = {"PASS": 0, "FAIL": 0, "WARN": 0, "SKIP": 0, "NON_VERIFIABLE": 0}
+    counts: dict[str, int] = {
+        "PASS": 0, "FAIL": 0, "WARN": 0, "SKIP": 0,
+        "NON_VERIFIABLE": 0, "SCOPE_MISMATCH": 0,
+    }
     for rep in reports:
         for cmp in rep.comparisons:
             counts[cmp.verdict] = counts.get(cmp.verdict, 0) + 1
@@ -125,8 +132,12 @@ def _text_report(reports: list[PlayerReport]) -> str:
     total = sum(counts.values())
     pass_pct = 100.0 * counts["PASS"] / total if total else 0.0
 
+    # Determine active scope (use the first report's game_type, or "regular")
+    active_scope = reports[0].game_type if reports else "regular"
+
     lines.append("=" * 70)
     lines.append("  BASEBALL STATS VERIFICATION REPORT")
+    lines.append(f"  Game type scope: {active_scope}")
     lines.append("=" * 70)
     lines.append(
         f"  Players: {len(reports)}  |  "
@@ -134,6 +145,7 @@ def _text_report(reports: list[PlayerReport]) -> str:
         f"PASS: {counts['PASS']} ({pass_pct:.1f}%)  |  "
         f"FAIL: {counts['FAIL']}  |  "
         f"WARN: {counts['WARN']}  |  "
+        f"SCOPE_MISMATCH: {counts['SCOPE_MISMATCH']}  |  "
         f"SKIP: {counts['SKIP']}  |  "
         f"NON_VER: {counts['NON_VERIFIABLE']}"
     )
@@ -145,14 +157,14 @@ def _text_report(reports: list[PlayerReport]) -> str:
     if top:
         lines.append("TOP DISCREPANCIES")
         lines.append("-" * 70)
-        lines.append(f"  {'Player':<20} {'Stat':<14} {'Ours':>8} {'MaxAbsDiff':>10} {'Verdict':<8}")
-        lines.append(f"  {'-'*20} {'-'*14} {'-'*8} {'-'*10} {'-'*8}")
+        lines.append(f"  {'Player':<20} {'Stat':<14} {'Ours':>8} {'MaxAbsDiff':>10} {'Verdict':<14}")
+        lines.append(f"  {'-'*20} {'-'*14} {'-'*8} {'-'*10} {'-'*14}")
         for r in top:
             diffs = {k: v for k, v in r.items() if k.startswith("absdiff_") and v is not None}
             max_d = max(diffs.values()) if diffs else 0.0
             lines.append(
                 f"  {r['player']:<20} {r['stat']:<14} {_fmt(r['our_value']):>8} "
-                f"{max_d:>10.4f} {r['verdict']:<8}"
+                f"{max_d:>10.4f} {r['verdict']:<14}"
             )
         lines.append("")
 
@@ -161,10 +173,17 @@ def _text_report(reports: list[PlayerReport]) -> str:
         lines.append(f"{'─'*70}")
         lines.append(
             f"  {rep.player.name}  |  {rep.year}  |  {rep.player_type.upper()}"
+            f"  |  scope: {rep.game_type}"
         )
         sample_str = ", ".join(f"{k}={v}" for k, v in rep.sample_notes.items() if v is not None)
         if sample_str:
             lines.append(f"  Sample: {sample_str}")
+        # Show PA breakdown if available and non-empty
+        if rep.pa_by_game_type:
+            breakdown_str = "  ".join(
+                f"{gt}={n}" for gt, n in sorted(rep.pa_by_game_type.items())
+            )
+            lines.append(f"  PA by game_type: {breakdown_str}")
         lines.append("")
         lines.append(f"  {'Stat':<14} {'Ours':>8} {'Sources':<38} {'V':>4}  Note")
         lines.append(f"  {'-'*14} {'-'*8} {'-'*38} {'-'*4}  {'-'*20}")
@@ -214,8 +233,10 @@ def _csv_report(reports: list[PlayerReport]) -> str:
 
 
 def _json_report(reports: list[PlayerReport]) -> str:
+    active_scope = reports[0].game_type if reports else "regular"
     data = {
         "summary": verdict_counts(reports),
+        "game_type_scope": active_scope,
         "top_discrepancies": top_discrepancies(reports),
         "players": [
             {
@@ -223,7 +244,9 @@ def _json_report(reports: list[PlayerReport]) -> str:
                 "mlbam_id": rep.player.mlbam_id,
                 "year": rep.year,
                 "player_type": rep.player_type,
+                "game_type": rep.game_type,
                 "sample_notes": rep.sample_notes,
+                "pa_by_game_type": rep.pa_by_game_type,
                 "comparisons": [
                     {
                         "stat": cmp.stat,
@@ -254,6 +277,7 @@ _VERDICT_STYLE = {
     "WARN": "background:#fff3cd;color:#856404",
     "SKIP": "background:#e2e3e5;color:#383d41",
     "NON_VERIFIABLE": "background:#d1ecf1;color:#0c5460",
+    "SCOPE_MISMATCH": "background:#ffeeba;color:#533f03",
 }
 
 
@@ -261,6 +285,7 @@ def _html_report(reports: list[PlayerReport]) -> str:
     counts = verdict_counts(reports)
     total = sum(counts.values())
     pass_pct = 100.0 * counts["PASS"] / total if total else 0.0
+    active_scope = reports[0].game_type if reports else "regular"
     top = top_discrepancies(reports, n=10)
 
     rows_html = ""
@@ -298,9 +323,14 @@ def _html_report(reports: list[PlayerReport]) -> str:
         sample_str = ", ".join(
             f"{k}={v}" for k, v in rep.sample_notes.items() if v is not None
         )
+        pa_breakdown_str = ""
+        if rep.pa_by_game_type:
+            pairs = "  ".join(f"{gt}={n}" for gt, n in sorted(rep.pa_by_game_type.items()))
+            pa_breakdown_str = f"<p style='color:#856404;font-family:monospace'>PA by game_type: {pairs}</p>"
         player_sections += f"""
-        <h3>{rep.player.name} — {rep.year} ({rep.player_type})</h3>
+        <h3>{rep.player.name} — {rep.year} ({rep.player_type}) <small style='color:#888'>scope: {rep.game_type}</small></h3>
         <p style='color:#555'>{sample_str}</p>
+        {pa_breakdown_str}
         <table border='1' cellpadding='4' cellspacing='0'
                style='border-collapse:collapse;width:100%;font-family:monospace'>
           <tr style='background:#343a40;color:white'>
@@ -323,14 +353,17 @@ def _html_report(reports: list[PlayerReport]) -> str:
   .badge-warn {{background:#fff3cd;color:#856404}}
   .badge-skip {{background:#e2e3e5;color:#383d41}}
   .badge-nv   {{background:#d1ecf1;color:#0c5460}}
+  .badge-scope {{background:#ffeeba;color:#533f03}}
 </style>
 </head>
 <body>
   <h1>Baseball Stats Verification Report</h1>
+  <p><strong>Game type scope:</strong> {active_scope}</p>
   <p>
     <span class='badge badge-pass'>PASS {counts['PASS']}</span>
     <span class='badge badge-fail'>FAIL {counts['FAIL']}</span>
     <span class='badge badge-warn'>WARN {counts['WARN']}</span>
+    <span class='badge badge-scope'>SCOPE_MISMATCH {counts['SCOPE_MISMATCH']}</span>
     <span class='badge badge-skip'>SKIP {counts['SKIP']}</span>
     <span class='badge badge-nv'>NON_VER {counts['NON_VERIFIABLE']}</span>
     &nbsp; Pass rate: <strong>{pass_pct:.1f}%</strong> of {total} checks

@@ -17,6 +17,7 @@ CORE_STAT_COLS = ["wOBA", "xwOBA", "K%", "BB%", "HardHit%", "Barrel%"]
 # Statcast columns used for split calculations in Phase 2
 STATCAST_KEEP_COLS = [
     "game_date",
+    "game_type",  # R=regular, F/D/L/W=postseason, S=spring — required for scope filtering
     "batter",
     "pitcher",
     "p_throws",  # pitcher handedness: L or R

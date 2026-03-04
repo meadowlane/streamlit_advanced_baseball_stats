@@ -26,25 +26,15 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-import pybaseball as pb  # type: ignore[import-untyped]  # noqa: E402
 
 from data.fetcher import _fetch_statcast_batter, _fetch_statcast_pitcher  # noqa: E402
 from stats.splits import (  # noqa: E402
     _compute_stats,
     _compute_all_pitcher_stats,
-    WOBA_WEIGHTS,
-    PA_EVENTS,
-    BATTED_BALL_EVENTS,
-    K_EVENTS,
-    CSW_DESCRIPTIONS,
-    WHIFF_DESCRIPTIONS,
-    SWING_DESCRIPTIONS,
-    FIRST_STRIKE_DESCRIPTIONS,
-    HARD_HIT_MPH,
-    BARREL_CODE,
 )
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
+from tools.verification.game_scope import filter_by_scope, SOURCE_SCOPE_SUPPORT  # noqa: E402
 
 # Fastball pitch type codes used for FBv calculation
 _FB_CODES = frozenset(["FF", "FA", "FT", "SI"])
@@ -62,27 +52,40 @@ class StatcastSource(BaseSource):
     def source_name(self) -> str:
         return "statcast"
 
+    @property
+    def supported_scopes(self) -> frozenset[str]:
+        return SOURCE_SCOPE_SUPPORT["statcast"]
+
     def get_batter_season(
         self,
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
         if offline:
             raise SourceError("StatcastSource: offline mode requires fixture")
 
         try:
-            df = _fetch_statcast_batter(player.mlbam_id, year)
+            df_full = _fetch_statcast_batter(player.mlbam_id, year)
         except Exception as exc:
             raise SourceError(f"Statcast batter fetch failed for {player.mlbam_id}/{year}: {exc}") from exc
 
-        if df.empty:
+        if df_full.empty:
             raise SourceError(f"No Statcast data for batter {player.mlbam_id} in {year}")
+
+        # Filter to the requested scope before computing
+        df = filter_by_scope(df_full, game_type)
+        if df.empty:
+            raise SourceError(
+                f"No Statcast data for batter {player.mlbam_id} in {year} "
+                f"for scope={game_type!r}"
+            )
 
         computed = _compute_stats(df, player_type="Batter")
 
-        # Also expose FBv from raw data (mean release_speed on FB pitch types)
+        # FBv from scope-filtered data
         result: dict[str, Any] = dict(computed)
         fbv = self._compute_fbv(df)
         if fbv is not None:
@@ -95,18 +98,26 @@ class StatcastSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
         if offline:
             raise SourceError("StatcastSource: offline mode requires fixture")
 
         try:
-            df = _fetch_statcast_pitcher(player.mlbam_id, year)
+            df_full = _fetch_statcast_pitcher(player.mlbam_id, year)
         except Exception as exc:
             raise SourceError(f"Statcast pitcher fetch failed for {player.mlbam_id}/{year}: {exc}") from exc
 
-        if df.empty:
+        if df_full.empty:
             raise SourceError(f"No Statcast data for pitcher {player.mlbam_id} in {year}")
+
+        df = filter_by_scope(df_full, game_type)
+        if df.empty:
+            raise SourceError(
+                f"No Statcast data for pitcher {player.mlbam_id} in {year} "
+                f"for scope={game_type!r}"
+            )
 
         computed = _compute_all_pitcher_stats(df)
         result: dict[str, Any] = dict(computed)
@@ -121,7 +132,6 @@ class StatcastSource(BaseSource):
     def _compute_fbv(df: Any) -> float | None:
         """Return mean fastball velocity from pitch-level Statcast data."""
         try:
-            import pandas as pd
             if "pitch_type" not in df.columns or "release_speed" not in df.columns:
                 return None
             fb_df = df[df["pitch_type"].isin(_FB_CODES) & df["release_speed"].notna()]

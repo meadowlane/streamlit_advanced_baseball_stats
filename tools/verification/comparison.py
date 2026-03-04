@@ -20,14 +20,13 @@ with a note explaining that a definition mismatch is likely.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from tools.verification.stat_map import STAT_MAP, StatMapping
 
 
-Verdict = Literal["PASS", "FAIL", "WARN", "SKIP", "NON_VERIFIABLE"]
+Verdict = Literal["PASS", "FAIL", "WARN", "SKIP", "NON_VERIFIABLE", "SCOPE_MISMATCH"]
 
 # Minimum samples — comparisons skip below these thresholds
 MIN_BATTER_PA = 30

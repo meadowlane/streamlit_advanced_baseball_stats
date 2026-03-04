@@ -135,7 +135,6 @@ def _build_stat_dict(
             continue
         raw = row[col]
         try:
-            import math
             if pd.isna(raw):
                 continue
         except (TypeError, ValueError):
@@ -182,8 +181,14 @@ class FanGraphsSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
+        if game_type != "regular":
+            raise SourceError(
+                f"FanGraphsSource only supports 'regular' scope; "
+                f"requested {game_type!r} — SKIP"
+            )
         if offline:
             raise SourceError("FanGraphsSource: offline mode requires fixture — no data available")
 
@@ -209,8 +214,14 @@ class FanGraphsSource(BaseSource):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
+        if game_type != "regular":
+            raise SourceError(
+                f"FanGraphsSource only supports 'regular' scope; "
+                f"requested {game_type!r} — SKIP"
+            )
         if offline:
             raise SourceError("FanGraphsSource: offline mode requires fixture — no data available")
 

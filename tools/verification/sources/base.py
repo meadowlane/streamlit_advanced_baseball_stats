@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
+
+#: Valid game-type scope identifiers.
+VALID_SCOPES = frozenset(["regular", "postseason", "all"])
 
 
 @dataclass
@@ -57,15 +60,33 @@ class BaseSource(ABC):
     def source_name(self) -> str:
         """Short, unique identifier for this source, e.g. ``"fangraphs"``."""
 
+    @property
+    def supported_scopes(self) -> frozenset[str]:
+        """Game-type scopes this source can produce data for.
+
+        Defaults to regular-season only.  Override in sources that support
+        ``"postseason"`` and ``"all"`` (i.e., event-based sources that can
+        filter their raw data by ``game_type``).
+        """
+        return frozenset(["regular"])
+
     @abstractmethod
     def get_batter_season(
         self,
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
         """Return a stat dict for one batter's full season.
+
+        Parameters
+        ----------
+        game_type:
+            ``"regular"`` (default), ``"postseason"``, or ``"all"``.
+            Raise :class:`SourceError` if the requested scope is not in
+            :attr:`supported_scopes`.
 
         Values must already be normalised to the conventions used by the app:
         - K%, BB%, HardHit%, Barrel%, GB% etc. in **0-100 scale**
@@ -79,6 +100,7 @@ class BaseSource(ABC):
         player: PlayerIdentity,
         year: int,
         *,
+        game_type: str = "regular",
         offline: bool = False,
     ) -> dict[str, Any]:
         """Return a stat dict for one pitcher's full season.

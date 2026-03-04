@@ -32,13 +32,18 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from tools.verification.engine import (  # noqa: E402
-    GOLDEN_PLAYERS,
     run_golden_set_verification,
     run_verification,
-    EXTERNAL_SOURCES,
 )
 from tools.verification.reporting import write_report  # noqa: E402
 from tools.verification.sources.base import PlayerIdentity  # noqa: E402
+
+_GAME_TYPE_HELP = (
+    "Game-type scope for Statcast-based computation. "
+    "'regular' (default): regular season only — matches FanGraphs/MLB API. "
+    "'postseason': postseason games only (FG/BRef/MLB API will be SKIP). "
+    "'all': include every game type including spring training."
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -69,6 +74,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Player display names (must match FanGraphs 'Name' column exactly).",
     )
     who.add_argument(
+        "--players",
+        nargs="+",
+        metavar="NAME",
+        help=(
+            "Look up players by display name without needing --player-ids.  "
+            "Names are matched against FanGraphs data.  "
+            "Shortcut: --players 'Juan Soto' 'Aaron Judge'."
+        ),
+    )
+    who.add_argument(
         "--year",
         type=int,
         default=2024,
@@ -94,6 +109,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "Limit verification to these stat keys (e.g. --stats wOBA K%% ERA FIP).  "
             "Default: all verifiable stats."
         ),
+    )
+    who.add_argument(
+        "--game-type",
+        choices=["regular", "postseason", "all"],
+        default="regular",
+        dest="game_type",
+        help=_GAME_TYPE_HELP,
     )
 
     # --- Mode flags ---
@@ -148,7 +170,13 @@ def _resolve_player_ids(
     ids: list[int] = []
     identities: dict[int, PlayerIdentity] = {}
 
-    if args.player_ids:
+    if args.players:
+        # Name-only lookup: resolve MLBAM IDs from FanGraphs data
+        ids, identities = _lookup_players_by_name(
+            args.players, args.year, args.player_type
+        )
+
+    elif args.player_ids:
         ids = list(args.player_ids)
         if args.player_names:
             for mlbam_id, name in zip(ids, args.player_names):
@@ -159,6 +187,79 @@ def _resolve_player_ids(
 
     elif args.sample:
         ids, identities = _sample_players(args.year, args.player_type, args.sample)
+
+    return ids, identities
+
+
+def _lookup_players_by_name(
+    names: list[str],
+    year: int,
+    player_type: str,
+) -> tuple[list[int], dict[int, PlayerIdentity]]:
+    """Resolve player names → MLBAM IDs by pulling FanGraphs season data.
+
+    Performs a case-insensitive name match against the FanGraphs roster.
+    For each match, attempts to cross-reference the FanGraphs ID with an MLBAM ID
+    via ``pybaseball.playerid_reverse_lookup``.
+    """
+    import pybaseball as pb
+
+    pb.cache.enable()
+    try:
+        if player_type == "batter":
+            df = pb.batting_stats(year, qual=1)
+        else:
+            df = pb.pitching_stats(year, qual=1)
+    except Exception as exc:
+        print(f"[ERROR] Could not fetch FanGraphs data for name lookup: {exc}", file=sys.stderr)
+        return [], {}
+
+    if df is None or df.empty:
+        return [], {}
+
+    ids: list[int] = []
+    identities: dict[int, PlayerIdentity] = {}
+
+    for target_name in names:
+        name_lower = target_name.lower()
+        if "Name" not in df.columns:
+            print("[WARN] FanGraphs data has no 'Name' column", file=sys.stderr)
+            continue
+        matches = df[df["Name"].str.lower() == name_lower]
+        if matches.empty:
+            print(f"[WARN] Player '{target_name}' not found in FanGraphs {year} data.", file=sys.stderr)
+            continue
+
+        row = matches.iloc[0]
+        name = str(row.get("Name", target_name))
+        fg_id_raw = row.get("IDfg")
+        fg_id = int(fg_id_raw) if fg_id_raw is not None else None
+
+        # Try to find MLBAM ID
+        mlbam_id: int | None = None
+        mlbam_raw = row.get("key_mlbam")
+        if mlbam_raw is not None:
+            try:
+                mlbam_id = int(mlbam_raw)
+            except (TypeError, ValueError):
+                pass
+
+        if mlbam_id is None and fg_id is not None:
+            try:
+                from pybaseball import playerid_reverse_lookup
+                id_map = playerid_reverse_lookup([fg_id], key_type="fangraphs")
+                if not id_map.empty:
+                    mlbam_raw = id_map["key_mlbam"].iloc[0]
+                    mlbam_id = int(mlbam_raw)
+            except Exception as exc:
+                print(f"[WARN] Could not resolve MLBAM ID for '{name}': {exc}", file=sys.stderr)
+
+        if mlbam_id is None:
+            print(f"[WARN] Could not resolve MLBAM ID for '{target_name}' — skipping.", file=sys.stderr)
+            continue
+
+        ids.append(mlbam_id)
+        identities[mlbam_id] = PlayerIdentity(name=name, mlbam_id=mlbam_id, fg_id=fg_id)
 
     return ids, identities
 
@@ -230,14 +331,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.offline and args.record_fixtures:
         parser.error("--offline and --record-fixtures are mutually exclusive.")
 
-    if not args.golden_set and not args.player_ids and not args.sample:
-        parser.error("Provide --golden-set, --player-ids, or --sample to select players.")
+    if not args.golden_set and not args.player_ids and not args.sample and not args.players:
+        parser.error(
+            "Provide --golden-set, --player-ids, --players, or --sample to select players."
+        )
 
     # --- Run ---
     if args.golden_set:
         if args.verbose:
-            print("[Golden set] Running built-in golden player verification.", file=sys.stderr)
+            print(
+                f"[Golden set] Running built-in golden player verification "
+                f"(game-type scope: {args.game_type}).",
+                file=sys.stderr,
+            )
         reports = run_golden_set_verification(
+            game_type=args.game_type,
             offline=args.offline,
             record_fixtures=args.record_fixtures,
             verbose=args.verbose,
@@ -247,12 +355,14 @@ def main(argv: list[str] | None = None) -> int:
         if not ids:
             print("[ERROR] No player IDs resolved.  Exiting.", file=sys.stderr)
             return 1
+
         reports = run_verification(
             player_ids=ids,
             year=args.year,
             player_type=args.player_type,
             player_identities=identities,
             stats_to_check=args.stats,
+            game_type=args.game_type,
             offline=args.offline,
             record_fixtures=args.record_fixtures,
             verbose=args.verbose,
