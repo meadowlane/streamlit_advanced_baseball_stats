@@ -69,7 +69,7 @@ from tools.verification.game_scope import (
 _GOLDEN_BATTERS = [
     (592450, 2024, "Aaron Judge"),
     (660271, 2024, "Shohei Ohtani"),
-    (650402, 2024, "Luis Arraez"),
+    (650333, 2024, "Luis Arraez"),
     (665742, 2024, "Juan Soto"),
 ]
 
@@ -364,7 +364,7 @@ class TestGoldenBatters:
 
     def test_arraez_low_k_pct(self) -> None:
         """Luis Arraez 2024: K% must be below 10% — extreme contact hitter."""
-        comparisons = _run_offline(650402, 2024, "batter")
+        comparisons = _run_offline(650333, 2024, "batter")
         if comparisons is None:
             pytest.skip("Fixtures not yet recorded for Luis Arraez 2024")
 

@@ -215,7 +215,10 @@ def _compute_k_rate(pa: pd.DataFrame, _bb_df: pd.DataFrame, n_pa: int) -> float 
 def _compute_bb_rate(pa: pd.DataFrame, _bb_df: pd.DataFrame, n_pa: int) -> float | None:
     if n_pa == 0:
         return None
-    return (pa["events"] == "walk").sum() / n_pa
+    # Count both regular walks and intentional walks (intent_walk).
+    # FanGraphs BB% includes all base-on-balls; Statcast stores intentional
+    # walks as a separate event code "intent_walk".
+    return pa["events"].isin({"walk", "intent_walk"}).sum() / n_pa
 
 
 def _compute_hard_hit_rate(
