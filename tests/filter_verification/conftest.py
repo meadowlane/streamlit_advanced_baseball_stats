@@ -10,6 +10,7 @@ This module provides:
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +66,59 @@ def _summary_fixture_candidates(
             )
     return paths
 
+
+@lru_cache(maxsize=None)
+def _resolve_raw_fixture_path(player_type: str, mlbam_id: int, year: int) -> Path | None:
+    return next(
+        (candidate for candidate in _raw_fixture_candidates(player_type, mlbam_id, year) if candidate.exists()),
+        None,
+    )
+
+
+@lru_cache(maxsize=None)
+def _load_raw_fixture_cached(
+    player_type: str,
+    mlbam_id: int,
+    year: int,
+    scope: str,
+) -> pd.DataFrame:
+    path = _resolve_raw_fixture_path(player_type, mlbam_id, year)
+    if path is None:
+        raise FileNotFoundError(f"Missing raw fixture for {player_type}_{mlbam_id}_{year}")
+
+    df = pd.read_parquet(path)
+    if scope != "all":
+        from tests.reference_calc import filter_scope
+
+        df = filter_scope(df, scope)
+    return df
+
+
+@lru_cache(maxsize=None)
+def _load_summary_fixture_cached(
+    source: str,
+    player_type: str,
+    mlbam_id: int,
+    year: int,
+    split: str,
+) -> dict | None:
+    for path in _summary_fixture_candidates(source, player_type, mlbam_id, year, split):
+        if not path.exists():
+            continue
+        with open(path) as f:
+            data = json.load(f)
+
+        if split != "full" and isinstance(data, dict):
+            if "stats" in data and isinstance(data["stats"], dict):
+                return data["stats"]
+            if "splits" in data and isinstance(data["splits"], dict):
+                split_stats = data["splits"].get(split)
+                if isinstance(split_stats, dict):
+                    return split_stats
+
+        return data.get("stats", data)
+    return None
+
 # ---------------------------------------------------------------------------
 # Seed player registry
 # ---------------------------------------------------------------------------
@@ -96,20 +150,16 @@ def load_raw_fixture(
     Skips the test if the fixture file doesn't exist.
     Optionally applies scope filtering via reference_calc (NOT production code).
     """
+    scope_key = str(scope).strip().lower()
     candidates = _raw_fixture_candidates(player_type, mlbam_id, year)
-    path = next((candidate for candidate in candidates if candidate.exists()), None)
+    path = _resolve_raw_fixture_path(player_type, mlbam_id, year)
     if path is None:
         checked = ", ".join(str(p.relative_to(_PROJECT_ROOT)) for p in candidates)
         pytest.skip(
             f"Raw fixture missing for {player_type}_{mlbam_id}_{year}. "
             f"Checked: {checked}"
         )
-    df = pd.read_parquet(path)
-    if scope != "all":
-        from tests.reference_calc import filter_scope
-
-        df = filter_scope(df, scope)
-    return df
+    return _load_raw_fixture_cached(player_type, mlbam_id, year, scope_key)
 
 
 def load_summary_fixture(
@@ -119,24 +169,8 @@ def load_summary_fixture(
 
     Returns None if the fixture doesn't exist (caller should SKIP).
     """
-    for path in _summary_fixture_candidates(source, player_type, mlbam_id, year, split):
-        if not path.exists():
-            continue
-        with open(path) as f:
-            data = json.load(f)
-
-        # Preferred explicit split fixture.
-        if split != "full" and isinstance(data, dict):
-            if "stats" in data and isinstance(data["stats"], dict):
-                return data["stats"]
-            if "splits" in data and isinstance(data["splits"], dict):
-                split_stats = data["splits"].get(split)
-                if isinstance(split_stats, dict):
-                    return split_stats
-
-        # Full-season fixture format.
-        return data.get("stats", data)
-    return None
+    split_key = str(split).strip()
+    return _load_summary_fixture_cached(source, player_type, mlbam_id, year, split_key)
 
 
 # ---------------------------------------------------------------------------

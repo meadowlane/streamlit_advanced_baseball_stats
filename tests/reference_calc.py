@@ -193,6 +193,43 @@ def filter_count(
     return df[mask].copy()
 
 
+def apply_reference_filters(
+    df: pd.DataFrame,
+    *,
+    scope: str = "all",
+    pitcher_hand: str | None = None,
+    batter_hand: str | None = None,
+    home_away: str | None = None,
+    month: int | None = None,
+    inning_min: int | None = None,
+    inning_max: int | None = None,
+    balls: int | None = None,
+    strikes: int | None = None,
+    pitcher_perspective: bool = False,
+) -> pd.DataFrame:
+    """Apply reference filters once and return the filtered DataFrame."""
+    filtered = filter_scope(df, scope) if scope != "all" else df
+
+    if pitcher_hand is not None:
+        filtered = filter_pitcher_hand(filtered, pitcher_hand)
+    if batter_hand is not None:
+        filtered = filter_batter_hand(filtered, batter_hand)
+    if home_away is not None:
+        filtered = filter_home_away(
+            filtered,
+            home_away,
+            pitcher_perspective=pitcher_perspective,
+        )
+    if month is not None:
+        filtered = filter_month(filtered, month)
+    if inning_min is not None or inning_max is not None:
+        filtered = filter_inning(filtered, inning_min=inning_min, inning_max=inning_max)
+    if balls is not None or strikes is not None:
+        filtered = filter_count(filtered, balls=balls, strikes=strikes)
+
+    return filtered
+
+
 # ---------------------------------------------------------------------------
 # Stat computation — independent implementations
 # ---------------------------------------------------------------------------
@@ -312,3 +349,12 @@ def compute_stats(df: pd.DataFrame) -> dict[str, int | float | None]:
         "Barrel%": barrel_pct,
         "GB%": gb_pct,
     }
+
+
+def compute_reference_stats(
+    df: pd.DataFrame,
+    **filters: object,
+) -> dict[str, int | float | None]:
+    """Apply any reference filters once, then compute all stats from that subset."""
+    filtered = apply_reference_filters(df, **filters)
+    return compute_stats(filtered)

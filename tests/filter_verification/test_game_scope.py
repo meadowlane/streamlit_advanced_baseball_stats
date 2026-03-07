@@ -29,6 +29,7 @@ from tests.reference_calc import (
     REGULAR_GAME_TYPES,
     POSTSEASON_GAME_TYPES,
     compute_pa,
+    compute_reference_stats,
     compute_stats,
     filter_scope,
 )
@@ -177,10 +178,9 @@ class TestGameScopeAppVsReferenceSynthetic:
         from stats.splits import _compute_stats
 
         app_df = filter_by_scope(synthetic_df, "regular")
-        ref_df = filter_scope(synthetic_df, "regular")
 
         app_stats = _compute_stats(app_df, player_type="Batter")
-        ref_stats = compute_stats(ref_df)
+        ref_stats = compute_reference_stats(synthetic_df, scope="regular")
 
         # PA must be exact
         assert app_stats["PA"] == ref_stats["PA"], (
@@ -243,10 +243,9 @@ class TestGameScopeRealFixtures:
         df_all = load_raw_fixture(player_type, mlbam_id, year, "all")
 
         app_df = filter_by_scope(df_all, "regular")
-        ref_df = filter_scope(df_all, "regular")
 
         app_stats = _compute_stats(app_df, player_type="Batter")
-        ref_stats = compute_stats(ref_df)
+        ref_stats = compute_reference_stats(df_all, scope="regular")
 
         assert app_stats["PA"] == ref_stats["PA"], (
             f"{name}: app PA={app_stats['PA']}, ref PA={ref_stats['PA']}. "

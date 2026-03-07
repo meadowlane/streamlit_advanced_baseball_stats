@@ -25,6 +25,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from tests.reference_calc import (
     compute_pa,
+    compute_reference_stats,
     compute_stats,
     filter_pitcher_hand,
     filter_scope,
@@ -147,10 +148,9 @@ class TestPitcherHandAppVsReferenceSynthetic:
         from stats.splits import _compute_stats
 
         app_filtered = apply_filters(synthetic_df, SplitFilters(pitcher_hand=hand))
-        ref_filtered = filter_pitcher_hand(synthetic_df, hand)
 
         app_stats = _compute_stats(app_filtered, player_type="Batter")
-        ref_stats = compute_stats(ref_filtered)
+        ref_stats = compute_reference_stats(synthetic_df, pitcher_hand=hand)
 
         # PA exact
         assert app_stats["PA"] == ref_stats["PA"]
@@ -229,10 +229,9 @@ class TestPitcherHandRealFixtures:
         df = load_raw_fixture(player_type, mlbam_id, year, "regular")
 
         app_filtered = apply_filters(df, SplitFilters(pitcher_hand=hand))
-        ref_filtered = filter_pitcher_hand(df, hand)
 
         app_stats = _compute_stats(app_filtered, player_type="Batter")
-        ref_stats = compute_stats(ref_filtered)
+        ref_stats = compute_reference_stats(df, pitcher_hand=hand)
 
         assert app_stats["PA"] == ref_stats["PA"], (
             f"{name} vs {hand}HP: app PA={app_stats['PA']}, ref PA={ref_stats['PA']}"

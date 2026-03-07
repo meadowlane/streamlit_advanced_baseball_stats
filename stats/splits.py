@@ -181,7 +181,7 @@ class StatSpec:
 
 def _pa_events(df: pd.DataFrame) -> pd.DataFrame:
     """Return only the rows that represent plate-appearance outcomes."""
-    return df[df["events"].notna() & df["events"].isin(PA_EVENTS)].copy()
+    return df[df["events"].notna() & df["events"].isin(PA_EVENTS)]
 
 
 def _batted_ball_events(pa: pd.DataFrame) -> pd.DataFrame:
@@ -436,6 +436,8 @@ def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
     if work.empty:
         return pd.DataFrame(columns=ARSENAL_COLS)
 
+    has_velo = "release_speed" in work.columns
+    has_spin = "release_spin_rate" in work.columns
     rows: list[dict[str, float | int | str | None]] = []
     for pitch_type, grp in work.groupby("pitch_type", sort=False):
         n_pitches = int(len(grp))
@@ -454,12 +456,12 @@ def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
 
         velo = (
             grp["release_speed"].mean()
-            if "release_speed" in grp.columns
+            if has_velo
             else float("nan")
         )
         spin = (
             grp["release_spin_rate"].mean()
-            if "release_spin_rate" in grp.columns
+            if has_spin
             else float("nan")
         )
 

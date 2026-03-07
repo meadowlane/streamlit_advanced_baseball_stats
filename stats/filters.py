@@ -400,51 +400,61 @@ def apply_filters(
     ):
         return df
 
+    mask = pd.Series(True, index=df.index, dtype="bool")
+    applied_mask = False
+
     # --- inning ----------------------------------------------------------
     if filters.inning_min is not None or filters.inning_max is not None:
         if _col_ok(df, "inning", "inning"):
+            applied_mask = True
             if filters.inning_min is not None:
-                df = df[df["inning"] >= filters.inning_min]
+                mask &= df["inning"] >= filters.inning_min
             if filters.inning_max is not None:
-                df = df[df["inning"] <= filters.inning_max]
+                mask &= df["inning"] <= filters.inning_max
 
     # --- pitcher handedness ----------------------------------------------
     if filters.pitcher_hand is not None:
         if _col_ok(df, "p_throws", "pitcher_hand"):
-            df = df[df["p_throws"] == filters.pitcher_hand]
+            applied_mask = True
+            mask &= df["p_throws"] == filters.pitcher_hand
 
     # --- batter handedness -----------------------------------------------
     if filters.batter_hand is not None:
         if _col_ok(df, "stand", "batter_hand"):
-            df = df[df["stand"] == filters.batter_hand]
+            applied_mask = True
+            mask &= df["stand"] == filters.batter_hand
 
     # --- home / away -----------------------------------------------------
     if filters.home_away is not None:
         if _col_ok(df, "inning_topbot", "home_away"):
+            applied_mask = True
             if pitcher_perspective:
                 topbot = "Top" if filters.home_away == "home" else "Bot"
             else:
                 topbot = "Bot" if filters.home_away == "home" else "Top"
-            df = df[df["inning_topbot"] == topbot]
+            mask &= df["inning_topbot"] == topbot
 
     # --- month (prefer precomputed _month; fallback to game_date) --------
     if filters.month is not None:
         if _MONTH_COL in df.columns:
-            df = df[df[_MONTH_COL] == filters.month]
+            applied_mask = True
+            mask &= df[_MONTH_COL] == filters.month
         elif _col_ok(df, "game_date", "month"):
-            df = df[
-                pd.to_datetime(df["game_date"], errors="coerce").dt.month
-                == filters.month
-            ]
+            applied_mask = True
+            mask &= pd.to_datetime(df["game_date"], errors="coerce").dt.month == filters.month
 
     # --- count: balls ----------------------------------------------------
     if filters.balls is not None:
         if _col_ok(df, "balls", "balls"):
-            df = df[df["balls"] == filters.balls]
+            applied_mask = True
+            mask &= df["balls"] == filters.balls
 
     # --- count: strikes --------------------------------------------------
     if filters.strikes is not None:
         if _col_ok(df, "strikes", "strikes"):
-            df = df[df["strikes"] == filters.strikes]
+            applied_mask = True
+            mask &= df["strikes"] == filters.strikes
 
-    return df
+    if not applied_mask:
+        return df
+    return df[mask]
