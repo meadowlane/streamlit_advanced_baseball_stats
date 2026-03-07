@@ -16,9 +16,54 @@ import numpy as np
 import pandas as pd
 import pytest
 
-FIXTURE_DIR = Path(__file__).resolve().parent.parent / "filter_fixtures"
-RAW_DIR = FIXTURE_DIR / "raw"
-SUMMARY_DIR = FIXTURE_DIR / "summaries"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_FIXTURE_ROOT = _PROJECT_ROOT / "tests" / "verification_fixtures"
+_FILTER_FIXTURE_ROOT = _FIXTURE_ROOT / "filter_validation"
+_LEGACY_FILTER_FIXTURE_ROOT = _PROJECT_ROOT / "tests" / "filter_fixtures"
+
+
+def _raw_fixture_candidates(player_type: str, mlbam_id: int, year: int) -> list[Path]:
+    file_name = f"{player_type}_{mlbam_id}_{year}_all.parquet"
+    return [
+        _FILTER_FIXTURE_ROOT / "raw" / file_name,
+        _FIXTURE_ROOT / "raw" / file_name,
+        _LEGACY_FILTER_FIXTURE_ROOT / "raw" / file_name,
+    ]
+
+
+def _summary_fixture_candidates(
+    source: str,
+    player_type: str,
+    mlbam_id: int,
+    year: int,
+    split: str,
+) -> list[Path]:
+    base_name = f"{player_type}_{mlbam_id}_{year}"
+    sources = [source]
+
+    # Handedness split fixtures are recorded from Baseball Reference when
+    # FanGraphs split fixtures are unavailable.
+    if source == "fangraphs" and split in {"vsL", "vsR"}:
+        sources.append("baseball_ref")
+
+    paths: list[Path] = []
+    for source_name in sources:
+        paths.extend(
+            [
+                _FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}_{split}.json",
+                _FIXTURE_ROOT / source_name / f"{base_name}_{split}.json",
+                _LEGACY_FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}_{split}.json",
+            ]
+        )
+        if split == "full":
+            paths.extend(
+                [
+                    _FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}.json",
+                    _FIXTURE_ROOT / source_name / f"{base_name}.json",
+                    _LEGACY_FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}.json",
+                ]
+            )
+    return paths
 
 # ---------------------------------------------------------------------------
 # Seed player registry
@@ -51,9 +96,14 @@ def load_raw_fixture(
     Skips the test if the fixture file doesn't exist.
     Optionally applies scope filtering via reference_calc (NOT production code).
     """
-    path = RAW_DIR / f"{player_type}_{mlbam_id}_{year}_all.parquet"
-    if not path.exists():
-        pytest.skip(f"Raw fixture missing: {path.name}")
+    candidates = _raw_fixture_candidates(player_type, mlbam_id, year)
+    path = next((candidate for candidate in candidates if candidate.exists()), None)
+    if path is None:
+        checked = ", ".join(str(p.relative_to(_PROJECT_ROOT)) for p in candidates)
+        pytest.skip(
+            f"Raw fixture missing for {player_type}_{mlbam_id}_{year}. "
+            f"Checked: {checked}"
+        )
     df = pd.read_parquet(path)
     if scope != "all":
         from tests.reference_calc import filter_scope
@@ -69,12 +119,24 @@ def load_summary_fixture(
 
     Returns None if the fixture doesn't exist (caller should SKIP).
     """
-    path = SUMMARY_DIR / source / f"{player_type}_{mlbam_id}_{year}_{split}.json"
-    if not path.exists():
-        return None
-    with open(path) as f:
-        data = json.load(f)
-    return data.get("stats", data)
+    for path in _summary_fixture_candidates(source, player_type, mlbam_id, year, split):
+        if not path.exists():
+            continue
+        with open(path) as f:
+            data = json.load(f)
+
+        # Preferred explicit split fixture.
+        if split != "full" and isinstance(data, dict):
+            if "stats" in data and isinstance(data["stats"], dict):
+                return data["stats"]
+            if "splits" in data and isinstance(data["splits"], dict):
+                split_stats = data["splits"].get(split)
+                if isinstance(split_stats, dict):
+                    return split_stats
+
+        # Full-season fixture format.
+        return data.get("stats", data)
+    return None
 
 
 # ---------------------------------------------------------------------------
