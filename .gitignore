@@ -21,6 +21,11 @@ htmlcov/
 # Type checking
 .mypy_cache/
 
+# Local tool caches
+.cache/
+.claude/
+.matplotlib/
+
 # Streamlit
 .streamlit/secrets.toml
 

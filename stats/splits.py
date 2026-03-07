@@ -181,7 +181,7 @@ class StatSpec:
 
 def _pa_events(df: pd.DataFrame) -> pd.DataFrame:
     """Return only the rows that represent plate-appearance outcomes."""
-    return df[df["events"].notna() & df["events"].isin(PA_EVENTS)].copy()
+    return df[df["events"].notna() & df["events"].isin(PA_EVENTS)]
 
 
 def _batted_ball_events(pa: pd.DataFrame) -> pd.DataFrame:
@@ -258,6 +258,50 @@ def _compute_gb_rate_fraction(
     if gb_rate is None:
         return None
     return gb_rate / 100.0
+
+
+_NON_AB_EVENTS = frozenset(
+    [
+        "walk",
+        "intent_walk",
+        "hit_by_pitch",
+        "sac_fly",
+        "sac_fly_double_play",
+        "sac_bunt",
+        "sac_bunt_double_play",
+        "catcher_interf",
+    ]
+)
+_HIT_EVENTS = frozenset(["single", "double", "triple", "home_run"])
+
+
+def _compute_traditional_stats(df: pd.DataFrame) -> dict[str, float | int | None]:
+    """Compute filter-aware traditional batter stats from raw Statcast rows."""
+    pa = _pa_events(df)
+    if pa.empty:
+        return {"AVG": None, "OBP": None, "SLG": None, "OPS": None, "HR": None}
+
+    events = pa["events"]
+    n_pa = len(pa)
+
+    hits = int(events.isin(_HIT_EVENTS).sum())
+    hr = int(events.eq("home_run").sum())
+    singles = int(events.eq("single").sum())
+    doubles = int(events.eq("double").sum())
+    triples = int(events.eq("triple").sum())
+    walks = int(events.isin({"walk", "intent_walk"}).sum())
+    hbp = int(events.eq("hit_by_pitch").sum())
+    sac_flies = int(events.isin({"sac_fly", "sac_fly_double_play"}).sum())
+    ab = n_pa - int(events.isin(_NON_AB_EVENTS).sum())
+
+    avg = round(hits / ab, 3) if ab > 0 else None
+    obp_denominator = ab + walks + hbp + sac_flies
+    obp = round((hits + walks + hbp) / obp_denominator, 3) if obp_denominator > 0 else None
+    total_bases = singles + (2 * doubles) + (3 * triples) + (4 * hr)
+    slg = round(total_bases / ab, 3) if ab > 0 else None
+    ops = round(obp + slg, 3) if obp is not None and slg is not None else None
+
+    return {"AVG": avg, "OBP": obp, "SLG": slg, "OPS": ops, "HR": hr}
 
 
 def _compute_xwoba_value(
@@ -436,6 +480,8 @@ def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
     if work.empty:
         return pd.DataFrame(columns=ARSENAL_COLS)
 
+    has_velo = "release_speed" in work.columns
+    has_spin = "release_spin_rate" in work.columns
     rows: list[dict[str, float | int | str | None]] = []
     for pitch_type, grp in work.groupby("pitch_type", sort=False):
         n_pitches = int(len(grp))
@@ -452,16 +498,8 @@ def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
         if swings > 0:
             whiff_pct = round((whiffs / swings) * 100.0, 1)
 
-        velo = (
-            grp["release_speed"].mean()
-            if "release_speed" in grp.columns
-            else float("nan")
-        )
-        spin = (
-            grp["release_spin_rate"].mean()
-            if "release_spin_rate" in grp.columns
-            else float("nan")
-        )
+        velo = grp["release_speed"].mean() if has_velo else float("nan")
+        spin = grp["release_spin_rate"].mean() if has_spin else float("nan")
 
         rows.append(
             {

@@ -6,6 +6,7 @@ import pytest
 
 from stats.splits import (
     _compute_all_pitcher_stats,
+    _compute_traditional_stats,
     _pa_events,
     _compute_stats,
     _compute_gb_rate,
@@ -249,6 +250,92 @@ class TestComputeStats:
         df = _make_df(20).drop(columns=["bb_type"])
         stats = _compute_stats(df)
         assert stats["GB%"] is None
+
+
+class TestComputeTraditionalStats:
+    def test_all_singles(self):
+        stats = _compute_traditional_stats(pd.DataFrame({"events": ["single"] * 10}))
+
+        assert stats == {
+            "AVG": 1.0,
+            "OBP": 1.0,
+            "SLG": 1.0,
+            "OPS": 2.0,
+            "HR": 0,
+        }
+
+    def test_mixed_event_sample(self):
+        df = pd.DataFrame(
+            {
+                "events": [
+                    "home_run",
+                    "home_run",
+                    "home_run",
+                    "single",
+                    "single",
+                    "walk",
+                    "walk",
+                    "hit_by_pitch",
+                    "sac_fly",
+                    "strikeout",
+                ]
+            }
+        )
+
+        stats = _compute_traditional_stats(df)
+
+        assert stats["AVG"] == pytest.approx(0.833, abs=0.001)
+        assert stats["OBP"] == pytest.approx(0.800, abs=0.001)
+        assert stats["SLG"] == pytest.approx(2.333, abs=0.001)
+        assert stats["OPS"] == pytest.approx(3.133, abs=0.001)
+        assert stats["HR"] == 3
+
+    def test_all_walks_with_no_at_bats(self):
+        stats = _compute_traditional_stats(pd.DataFrame({"events": ["walk"] * 4}))
+
+        assert stats["AVG"] is None
+        assert stats["SLG"] is None
+        assert stats["OBP"] == pytest.approx(1.0, abs=0.001)
+        assert stats["OPS"] is None
+        assert stats["HR"] == 0
+
+    def test_empty_dataframe_returns_all_none(self):
+        stats = _compute_traditional_stats(pd.DataFrame({"events": []}))
+
+        assert stats == {
+            "AVG": None,
+            "OBP": None,
+            "SLG": None,
+            "OPS": None,
+            "HR": None,
+        }
+
+    def test_home_run_count_is_integer_and_correct(self):
+        stats = _compute_traditional_stats(
+            pd.DataFrame({"events": ["home_run", "walk", "home_run", "single"]})
+        )
+
+        assert stats["HR"] == 2
+        assert isinstance(stats["HR"], int)
+
+    def test_ops_equals_obp_plus_slg(self):
+        stats = _compute_traditional_stats(
+            pd.DataFrame(
+                {
+                    "events": [
+                        "single",
+                        "double",
+                        "walk",
+                        "strikeout",
+                        "field_out",
+                    ]
+                }
+            )
+        )
+
+        assert stats["OBP"] is not None
+        assert stats["SLG"] is not None
+        assert stats["OPS"] == pytest.approx(stats["OBP"] + stats["SLG"], abs=0.001)
 
 
 class TestComputeGbRate:

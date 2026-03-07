@@ -22,13 +22,15 @@ if str(_PROJECT_ROOT) not in sys.path:
 from data.fetcher import (  # noqa: E402
     _fetch_batting_stats,
     _fetch_pitching_stats,
-    _fetch_statcast_batter,
-    _fetch_statcast_pitcher,
     get_player_row,
 )
 from stats.splits import _compute_stats, _compute_all_pitcher_stats  # noqa: E402
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
+from tools.verification.sources.statcast_cache import (  # noqa: E402
+    get_cached_batter_statcast,
+    get_cached_pitcher_statcast,
+)
 from tools.verification.game_scope import (  # noqa: E402
     filter_by_scope,
     pa_breakdown_by_game_type,
@@ -38,21 +40,52 @@ from tools.verification.game_scope import (  # noqa: E402
 
 # Pitcher FG passthrough columns we want to expose alongside the Statcast stats.
 _FG_PITCHER_PASSTHROUGHS = [
-    "ERA", "FIP", "xFIP", "SIERA", "xERA",
-    "W", "L", "IP",
-    "wOBA", "xwOBA",
-    "K%", "BB%", "GB%", "FB%",
-    "HardHit%", "Barrel%",
-    "FBv", "Stuff+", "Location+", "Pitching+",
-    "CSW%", "Whiff%", "F-Strike%",
+    "ERA",
+    "FIP",
+    "xFIP",
+    "SIERA",
+    "xERA",
+    "W",
+    "L",
+    "IP",
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "GB%",
+    "FB%",
+    "HardHit%",
+    "Barrel%",
+    "FBv",
+    "Stuff+",
+    "Location+",
+    "Pitching+",
+    "CSW%",
+    "Whiff%",
+    "F-Strike%",
 ]
 
 # Batter FG passthrough columns
 _FG_BATTER_PASSTHROUGHS = [
-    "wRC+", "wOBA", "xwOBA",
-    "K%", "BB%", "HardHit%", "Barrel%", "GB%", "FB%",
-    "AVG", "OBP", "SLG", "OPS",
-    "PA", "H", "HR", "BB", "SO", "HBP",
+    "wRC+",
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "HardHit%",
+    "Barrel%",
+    "GB%",
+    "FB%",
+    "AVG",
+    "OBP",
+    "SLG",
+    "OPS",
+    "PA",
+    "H",
+    "HR",
+    "BB",
+    "SO",
+    "HBP",
 ]
 
 
@@ -62,6 +95,7 @@ def _safe_get(row: Any, col: str) -> Any:
         val = row[col]
         # pandas NA → None
         import pandas as pd  # local import to avoid top-level pandas dependency issues
+
         if pd.isna(val):
             return None
         return val
@@ -111,7 +145,7 @@ class AppSource(BaseSource):
             )
 
         # 2. Statcast pitch-level data (full season, all game types)
-        sc_df_full = _fetch_statcast_batter(player.mlbam_id, year)
+        sc_df_full = get_cached_batter_statcast(player.mlbam_id, year)
 
         # Record PA breakdown by game_type BEFORE filtering — used for diagnostics
         _pa_breakdown = pa_breakdown_by_game_type(sc_df_full)
@@ -166,7 +200,7 @@ class AppSource(BaseSource):
             )
 
         # 2. Statcast pitch-level data (full season, all game types)
-        sc_df_full = _fetch_statcast_pitcher(player.mlbam_id, year)
+        sc_df_full = get_cached_pitcher_statcast(player.mlbam_id, year)
 
         # Filter to the requested scope before computing
         sc_df = filter_by_scope(sc_df_full, game_type)

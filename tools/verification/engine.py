@@ -34,17 +34,13 @@ Fixture strategy
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Any, Literal
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError
 from tools.verification.sources.app_source import AppSource
 from tools.verification.sources.fangraphs import FanGraphsSource
 from tools.verification.sources.statcast import StatcastSource
+from tools.verification.sources.statcast_cache import clear_verification_statcast_cache
 from tools.verification.sources.mlb_api import MLBApiSource
 from tools.verification.sources.baseball_ref import BaseballRefSource
 from tools.verification.comparison import compare_all_stats, StatComparison
@@ -123,6 +119,11 @@ EXTERNAL_SOURCES: list[BaseSource] = [
     MLBApiSource(),
     BaseballRefSource(),
 ]
+
+
+def _build_independent_source_names(sources: list[BaseSource]) -> frozenset[str]:
+    """Return the set of external sources that count toward verdicts."""
+    return frozenset(src.source_name for src in sources if src.is_independent)
 
 
 # ---------------------------------------------------------------------------
@@ -264,19 +265,17 @@ def _apply_scope_mismatch_verdicts(
     """
     # Count PA from non-regular game types
     extra_pa = sum(
-        count for gt, count in pa_by_game_type.items()
-        if gt not in REGULAR_GAME_TYPES
+        count for gt, count in pa_by_game_type.items() if gt not in REGULAR_GAME_TYPES
     )
     if extra_pa == 0:
         return comparisons
 
     non_regular = {
-        gt: count for gt, count in pa_by_game_type.items()
+        gt: count
+        for gt, count in pa_by_game_type.items()
         if gt not in REGULAR_GAME_TYPES
     }
-    breakdown_str = "  ".join(
-        f"{gt}={n}" for gt, n in sorted(non_regular.items())
-    )
+    breakdown_str = "  ".join(f"{gt}={n}" for gt, n in sorted(non_regular.items()))
 
     # Stats directly affected by game-scope: counting stats and PA-derived rates
     scope_sensitive = frozenset(["PA", "H", "HR", "BB", "SO", "HBP"])
@@ -363,112 +362,129 @@ def run_verification(
     verbose:
         Print progress to stderr.
     """
+    independent_names = _build_independent_source_names(EXTERNAL_SOURCES)
     reports: list[PlayerReport] = []
-
+    clear_verification_statcast_cache()
     if verbose:
         print(f"[Scope] Game type: {game_type}", file=sys.stderr)
 
-    for mlbam_id in player_ids:
-        # Resolve or build a minimal PlayerIdentity
-        if player_identities and mlbam_id in player_identities:
-            player = player_identities[mlbam_id]
-        else:
-            # Minimal identity — source adapters using name/fg_id may fail
-            player = PlayerIdentity(name=str(mlbam_id), mlbam_id=mlbam_id)
+    try:
+        for mlbam_id in player_ids:
+            # Resolve or build a minimal PlayerIdentity
+            if player_identities and mlbam_id in player_identities:
+                player = player_identities[mlbam_id]
+            else:
+                # Minimal identity — source adapters using name/fg_id may fail
+                player = PlayerIdentity(name=str(mlbam_id), mlbam_id=mlbam_id)
 
-        if verbose:
-            print(f"\n[{player.name} / {year} / {player_type} / {game_type}]", file=sys.stderr)
-
-        # 1. App stats
-        app_raw = _fetch_app_stats(
-            player, year, player_type,
-            game_type=game_type,
-            offline=offline, record=record_fixtures,
-        )
-        if app_raw is None:
-            print(f"  [SKIP] Could not fetch app stats for {player.name}", file=sys.stderr)
-            continue
-
-        # Extract diagnostic metadata before normalizing
-        pa_by_game_type: dict[str, int] = app_raw.get("_pa_by_game_type", {})
-
-        app_stats = _normalize_source_dict(app_raw, "app")
-        sample_notes = _extract_sample_notes(app_raw)
-
-        # 2. External sources (only those that support the requested scope)
-        source_dicts: dict[str, dict[str, Any]] = {}
-        for src in EXTERNAL_SOURCES:
-            raw = _fetch_with_fixture_support(
-                src, player, year, player_type,
-                game_type=game_type,
-                offline=offline, record=record_fixtures,
-                verbose=verbose,
-            )
-            if raw is not None:
-                source_dicts[src.source_name] = _normalize_source_dict(raw, src.source_name)
-
-        if not source_dicts:
             if verbose:
+                print(
+                    f"\n[{player.name} / {year} / {player_type} / {game_type}]",
+                    file=sys.stderr,
+                )
+
+            # 1. App stats
+            app_raw = _fetch_app_stats(
+                player,
+                year,
+                player_type,
+                game_type=game_type,
+                offline=offline,
+                record=record_fixtures,
+            )
+            if app_raw is None:
+                print(
+                    f"  [SKIP] Could not fetch app stats for {player.name}",
+                    file=sys.stderr,
+                )
+                continue
+
+            # Extract diagnostic metadata before normalizing
+            pa_by_game_type: dict[str, int] = app_raw.get("_pa_by_game_type", {})
+
+            app_stats = _normalize_source_dict(app_raw, "app")
+            sample_notes = _extract_sample_notes(app_raw)
+
+            # 2. External sources (only those that support the requested scope)
+            source_dicts: dict[str, dict[str, Any]] = {}
+            for src in EXTERNAL_SOURCES:
+                raw = _fetch_with_fixture_support(
+                    src,
+                    player,
+                    year,
+                    player_type,
+                    game_type=game_type,
+                    offline=offline,
+                    record=record_fixtures,
+                    verbose=verbose,
+                )
+                if raw is not None:
+                    source_dicts[src.source_name] = _normalize_source_dict(
+                        raw, src.source_name
+                    )
+
+            if not source_dicts and verbose:
                 print(
                     f"  [WARN] No external sources returned data for {player.name} "
                     f"(scope={game_type!r}); building report with app-only data.",
                     file=sys.stderr,
                 )
 
-        # 3. Compare
-        sample_pa = sample_notes.get("PA") or sample_notes.get("approx_PA")
-        sample_ip_raw = sample_notes.get("IP")
-        sample_ip: float | None = None
-        if sample_ip_raw is not None:
-            try:
-                sample_ip = float(sample_ip_raw)
-            except (TypeError, ValueError):
-                pass
+            # 3. Compare
+            sample_pa = sample_notes.get("PA") or sample_notes.get("approx_PA")
+            sample_ip_raw = sample_notes.get("IP")
+            sample_ip: float | None = None
+            if sample_ip_raw is not None:
+                try:
+                    sample_ip = float(sample_ip_raw)
+                except (TypeError, ValueError):
+                    pass
 
-        comparisons = compare_all_stats(
-            our_stats=app_stats,
-            source_dicts=source_dicts,
-            stats_to_check=stats_to_check,
-            sample_pa=int(sample_pa) if sample_pa is not None else None,
-            sample_ip=sample_ip,
-            player_type=player_type,
-        )
-
-        # 4. Scope-mismatch post-processing:
-        #    If any non-regular game rows were present in the raw Statcast data
-        #    (e.g. game_type column was absent so filter couldn't apply), downgrade
-        #    PA/counting FAILs to SCOPE_MISMATCH with an explanatory note.
-        if game_type == "regular" and pa_by_game_type:
-            comparisons = _apply_scope_mismatch_verdicts(comparisons, pa_by_game_type)
-
-        report = PlayerReport(
-            player=player,
-            year=year,
-            player_type=player_type,
-            game_type=game_type,
-            comparisons=comparisons,
-            sample_notes=sample_notes,
-            pa_by_game_type=pa_by_game_type,
-        )
-        reports.append(report)
-
-        if verbose:
-            fails = [c for c in comparisons if c.verdict == "FAIL"]
-            warns = [c for c in comparisons if c.verdict == "WARN"]
-            scope_mm = [c for c in comparisons if c.verdict == "SCOPE_MISMATCH"]
-            print(
-                f"  → FAIL: {len(fails)}  WARN: {len(warns)}  "
-                f"SCOPE_MISMATCH: {len(scope_mm)}  "
-                f"Total: {len(comparisons)}",
-                file=sys.stderr,
+            comparisons = compare_all_stats(
+                our_stats=app_stats,
+                source_dicts=source_dicts,
+                stats_to_check=stats_to_check,
+                sample_pa=int(sample_pa) if sample_pa is not None else None,
+                sample_ip=sample_ip,
+                player_type=player_type,
+                independent_sources=independent_names,
             )
-            if pa_by_game_type:
-                breakdown = "  ".join(
-                    f"{gt}={n}" for gt, n in sorted(pa_by_game_type.items())
-                )
-                print(f"  PA by game_type: {breakdown}", file=sys.stderr)
 
-    return reports
+            if game_type == "regular" and pa_by_game_type:
+                comparisons = _apply_scope_mismatch_verdicts(
+                    comparisons, pa_by_game_type
+                )
+
+            report = PlayerReport(
+                player=player,
+                year=year,
+                player_type=player_type,
+                game_type=game_type,
+                comparisons=comparisons,
+                sample_notes=sample_notes,
+                pa_by_game_type=pa_by_game_type,
+            )
+            reports.append(report)
+
+            if verbose:
+                fails = [c for c in comparisons if c.verdict == "FAIL"]
+                warns = [c for c in comparisons if c.verdict == "WARN"]
+                scope_mm = [c for c in comparisons if c.verdict == "SCOPE_MISMATCH"]
+                print(
+                    f"  → FAIL: {len(fails)}  WARN: {len(warns)}  "
+                    f"SCOPE_MISMATCH: {len(scope_mm)}  "
+                    f"Total: {len(comparisons)}",
+                    file=sys.stderr,
+                )
+                if pa_by_game_type:
+                    breakdown = "  ".join(
+                        f"{gt}={n}" for gt, n in sorted(pa_by_game_type.items())
+                    )
+                    print(f"  PA by game_type: {breakdown}", file=sys.stderr)
+
+        return reports
+    finally:
+        clear_verification_statcast_cache()
 
 
 # ---------------------------------------------------------------------------

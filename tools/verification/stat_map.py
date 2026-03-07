@@ -529,13 +529,32 @@ STAT_MAP: dict[str, StatMapping] = {
 def get_verifiable_stats(player_type: str) -> list[str]:
     """Return stat keys for which ``verifiable=True`` for the given player type."""
     batter_verifiable = {
-        "PA", "H", "HR", "BB", "SO", "HBP",
-        "AVG", "OBP", "SLG", "OPS",
-        "wOBA", "K%", "BB%", "GB%",
+        "PA",
+        "H",
+        "HR",
+        "BB",
+        "SO",
+        "HBP",
+        "AVG",
+        "OBP",
+        "SLG",
+        "OPS",
+        "wOBA",
+        "K%",
+        "BB%",
+        "GB%",
     }
     pitcher_verifiable = {
-        "W", "L", "SO", "BB", "HR",
-        "ERA", "K%", "BB%", "K-BB%", "GB%",
+        "W",
+        "L",
+        "SO",
+        "BB",
+        "HR",
+        "ERA",
+        "K%",
+        "BB%",
+        "K-BB%",
+        "GB%",
     }
     if player_type.lower() == "pitcher":
         keys = pitcher_verifiable

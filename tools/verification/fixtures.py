@@ -1,19 +1,8 @@
 """JSON fixture persistence for offline / CI test runs.
 
-Fixtures allow the test suite to run without network access.  Each fixture is
+Fixtures allow the test suite to run without network access. Each fixture is
 a JSON file stored under ``tests/verification_fixtures/{source}/`` keyed by
 ``{player_type}_{mlbam_id}_{year}.json``.
-
-Workflow
---------
-1. **Record** (live fetch):
-   ``python -m tools.verify_stats ... --record-fixtures``
-   → fetches live data from all sources and writes JSON files.
-
-2. **Replay** (offline / CI):
-   ``python -m tools.verify_stats ... --offline``
-   or ``pytest tests/test_stat_verification.py`` (uses offline by default)
-   → loads from JSON files; raises ``FixtureNotFoundError`` if missing.
 """
 
 from __future__ import annotations
@@ -22,27 +11,26 @@ import json
 from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Fixture directory — relative to the project root
-# ---------------------------------------------------------------------------
-
 
 def _find_project_root(start: Path) -> Path:
-    """Walk up from *start* until a .git or pyproject.toml marker is found.
-
-    More robust than hardcoding ``parents[n]`` — works regardless of how deep
-    this file sits inside the project tree.
-    """
+    """Walk up from *start* until a .git or pyproject.toml marker is found."""
     candidate = start.resolve()
     while candidate != candidate.parent:
         if (candidate / ".git").exists() or (candidate / "pyproject.toml").exists():
             return candidate
         candidate = candidate.parent
-    return start.resolve()  # fallback: use the file's own directory
+    return start.resolve()
 
 
 _PROJECT_ROOT = _find_project_root(Path(__file__).parent)
-FIXTURE_DIR = _PROJECT_ROOT / "tests" / "verification_fixtures"
+_DEFAULT_FIXTURE_DIR = _PROJECT_ROOT / "tests" / "verification_fixtures"
+FIXTURE_DIR: Path = _DEFAULT_FIXTURE_DIR
+
+
+def set_fixture_root(path: str | Path) -> None:
+    """Override the fixture root directory."""
+    global FIXTURE_DIR
+    FIXTURE_DIR = Path(path).resolve()
 
 
 class FixtureNotFoundError(FileNotFoundError):
@@ -55,10 +43,7 @@ def fixture_path(
     mlbam_id: int,
     year: int,
 ) -> Path:
-    """Return the Path for one fixture file.
-
-    Example: ``tests/verification_fixtures/fangraphs/batter_592450_2024.json``
-    """
+    """Return the path for one fixture file."""
     return FIXTURE_DIR / source / f"{player_type}_{mlbam_id}_{year}.json"
 
 
@@ -79,15 +64,7 @@ def save_fixture(
     year: int,
     data: dict[str, Any],
 ) -> Path:
-    """Serialise *data* to the fixture file, creating parent dirs as needed.
-
-    Parameters
-    ----------
-    data:
-        The normalised stat dict returned by a source adapter.
-
-    Returns the path written.
-    """
+    """Serialise *data* to the fixture file, creating parent dirs as needed."""
     path = fixture_path(source, player_type, mlbam_id, year)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
@@ -101,13 +78,7 @@ def load_fixture(
     mlbam_id: int,
     year: int,
 ) -> dict[str, Any]:
-    """Load and return a previously recorded fixture.
-
-    Raises
-    ------
-    FixtureNotFoundError
-        When the fixture file does not exist.
-    """
+    """Load and return a previously recorded fixture."""
     path = fixture_path(source, player_type, mlbam_id, year)
     if not path.is_file():
         raise FixtureNotFoundError(
@@ -122,8 +93,9 @@ def load_fixture(
 def _json_serializer(obj: Any) -> Any:
     """Custom JSON serializer for types not natively supported by json."""
     import math
+
     if isinstance(obj, float) and math.isnan(obj):
         return None
-    if hasattr(obj, "item"):  # numpy scalars
+    if hasattr(obj, "item"):
         return obj.item()
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")

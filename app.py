@@ -31,6 +31,7 @@ from stats.splits import (
     STAT_REGISTRY,
     _compute_all_pitcher_stats,
     _compute_stats,
+    _compute_traditional_stats,
     compute_pitch_arsenal,
     get_pitcher_splits,
     get_sample_sizes,
@@ -143,6 +144,9 @@ _PITCHER_STAT_LABELS = {
     "EV": "EV Allowed",
     "LA": "LA Allowed",
     "FBv": "FB Velo",
+}
+_BATTER_STAT_LABELS = {
+    "wRC+": "wRC+ (season)",
 }
 _QP_SEASON = "season"
 _QP_PLAYER_TYPE = "player_type"
@@ -415,6 +419,19 @@ def _as_optional_float(value: object) -> float | None:
     return float(parsed)
 
 
+def _populate_batter_traditional_stats(raw_stats, player_row, filtered_df, filters_active):
+    raw_stats["wRC+"] = _as_optional_float(player_row.get("wRC+"))
+    raw_stats["RBI"] = _as_optional_float(player_row.get("RBI"))
+    if filters_active:
+        traditional_stats = _compute_traditional_stats(filtered_df)
+        for stat in ["AVG", "OBP", "SLG", "OPS", "HR"]:
+            raw_stats[stat] = traditional_stats.get(stat)
+    else:
+        for stat in TRADITIONAL_STATS:
+            raw_stats[stat] = _as_optional_float(player_row.get(stat))
+    return raw_stats
+
+
 def _find_case_insensitive_column(columns: list[object], candidates: list[str]) -> str | None:
     lowered = {str(col).strip().lower(): str(col) for col in columns}
     for candidate in candidates:
@@ -644,6 +661,13 @@ def _render_pitcher_stats_tiered(
             stats_order=tier2_outcome, cols_per_row=3,
             label_overrides=_PITCHER_STAT_LABELS,
         )
+        tier2_outcome_caption = _build_pitcher_group_filter_caption(
+            tier2_outcome,
+            PITCHER_SEASON_ONLY_STATS,
+            _PITCHER_STAT_LABELS,
+        )
+        if tier2_outcome_caption:
+            st.caption(tier2_outcome_caption)
 
     if tier2_dominance:
         _render_section_heading("Command & Dominance")
@@ -660,6 +684,13 @@ def _render_pitcher_stats_tiered(
             stats_order=tier3, cols_per_row=2,
             label_overrides=_PITCHER_STAT_LABELS,
         )
+        tier3_caption = _build_pitcher_group_filter_caption(
+            tier3,
+            PITCHER_SEASON_ONLY_STATS,
+            _PITCHER_STAT_LABELS,
+        )
+        if tier3_caption:
+            st.caption(tier3_caption)
 
     if not (tier2_outcome or tier2_dominance or tier3):
         st.info("No stats selected.")
@@ -679,11 +710,13 @@ def _render_batter_stats_tiered(
 
     if tier2:
         stat_cards_row(player_stats, percentiles, color_tiers,
-                       stats_order=tier2, cols_per_row=3)
+                       stats_order=tier2, cols_per_row=3,
+                       label_overrides=_BATTER_STAT_LABELS)
 
     if tier3:
         stat_cards_row(player_stats, percentiles, color_tiers,
-                       stats_order=tier3, cols_per_row=3)
+                       stats_order=tier3, cols_per_row=3,
+                       label_overrides=_BATTER_STAT_LABELS)
 
     if not (tier2 or tier3):
         st.info("No stats selected.")
@@ -756,6 +789,60 @@ def _sample_size_text(sample_sizes: dict[str, int | None], player_type: str) -> 
     if sample_sizes["approx_PA"] is not None:
         parts.append(f"{_appearance_label(player_type)}: {sample_sizes['approx_PA']:,}")
     return " | ".join(parts)
+
+
+def _pitch_mix_batter_hand_ui_state(filters: SplitFilters) -> tuple[bool, str | None]:
+    """Return whether pitch mix should show a local hand filter control."""
+    if filters.batter_hand is None:
+        return True, None
+    hand_label = "vs LHB" if filters.batter_hand == "L" else "vs RHB"
+    return False, f"Batter hand controlled by sidebar filter ({hand_label})."
+
+
+def _build_pitcher_group_filter_caption(
+    stats: list[str],
+    season_only_stats: set[str] | frozenset[str],
+    label_overrides: dict[str, str] | None = None,
+) -> str | None:
+    """Describe mixed season-level vs filter-affected groups inline."""
+    label_map = label_overrides or {}
+    season_labels = [label_map.get(stat, stat) for stat in stats if stat in season_only_stats]
+    filter_labels = [label_map.get(stat, stat) for stat in stats if stat not in season_only_stats]
+    if not season_labels or not filter_labels:
+        return None
+    return f"Season-level: {', '.join(season_labels)}. Filter-affected: {', '.join(filter_labels)}."
+
+
+def _headline_filter_note(filters: SplitFilters) -> str | None:
+    if filters == SplitFilters():
+        return None
+    return "Headline stats are full-season; filters apply to cards below."
+
+
+def _split_filter_warning(split_type: str, filters: SplitFilters) -> str | None:
+    if split_type == "hand" and filters.batter_hand is not None:
+        hand_label = "vs LHB" if filters.batter_hand == "L" else "vs RHB"
+        return f"Active Batter hand filter makes this split degenerate; all rows already reflect {hand_label}."
+    if split_type == "home_away" and filters.home_away is not None:
+        side_label = "Home" if filters.home_away == "home" else "Away"
+        return f"Active Home / Away filter makes this split degenerate; all rows already reflect {side_label}."
+    if split_type == "monthly" and filters.month is not None:
+        month_labels = {4: "Apr", 5: "May", 6: "Jun", 7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct"}
+        month_label = month_labels.get(filters.month, str(filters.month))
+        return f"Active Month filter makes this split degenerate; all rows already reflect {month_label}."
+    return None
+
+
+def _count_filter_note(filters: SplitFilters) -> str | None:
+    if filters.balls is None and filters.strikes is None:
+        return None
+    return "Count filter active: rate stats (K%, BB%, wOBA, etc.) reflect per-pitch frequency in this count, not traditional PA rates."
+
+
+def _trend_filter_note(filters: SplitFilters, apply_trend_filters: bool) -> str | None:
+    if filters == SplitFilters() or apply_trend_filters:
+        return None
+    return "Trend data currently shows full-season stats. Enable 'Apply current filters to each year' to reflect sidebar filters."
 
 
 def _filter_pitch_mix_by_batter_hand(
@@ -1561,11 +1648,10 @@ if missing_stat_requirements:
 # the percentile chart shows where this filtered performance ranks overall.
 # ---------------------------------------------------------------------------
 
+_filters_active = active_filter_summary != "No filters (full season data)"
 _raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
 if player_type == "Batter":
-    _raw["wRC+"] = _as_optional_float(player_row.get("wRC+"))
-    for stat in TRADITIONAL_STATS:
-        _raw[stat] = _as_optional_float(player_row.get(stat))
+    _raw = _populate_batter_traditional_stats(_raw, player_row, filtered_df, _filters_active)
 elif player_type == "Pitcher":
     _raw = _merge_pitcher_season_stats(_raw, pitcher_season_stats)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
@@ -1612,9 +1698,9 @@ traditional_color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
     if player_type == "Batter" and player_row_b is not None:
-        _raw_b["wRC+"] = _as_optional_float(player_row_b.get("wRC+"))
-        for stat in TRADITIONAL_STATS:
-            _raw_b[stat] = _as_optional_float(player_row_b.get(stat))
+        _raw_b = _populate_batter_traditional_stats(
+            _raw_b, player_row_b, filtered_df_b, _filters_active
+        )
     elif player_type == "Pitcher":
         _raw_b = _merge_pitcher_season_stats(_raw_b, pitcher_season_stats_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
@@ -1697,6 +1783,14 @@ else:
         _render_subheading_md(team, season_a)
         _render_batter_headline_md(player_row, _sample_size_text(sample_sizes, player_type))
 
+headline_filter_note = _headline_filter_note(filters)
+if headline_filter_note:
+    st.caption(headline_filter_note)
+
+count_filter_note = _count_filter_note(filters)
+if player_type == "Batter" and count_filter_note:
+    st.caption(count_filter_note)
+
 if _comparison_incomplete:
     st.info("⬅ Select **Player B** in the sidebar to compare two players.")
 
@@ -1716,8 +1810,13 @@ st.subheader("Season Stats")
 if player_type == "Pitcher":
     st.caption("Season-level metrics are preserved where filter-level equivalents are unavailable.")
 else:
-    st.caption("Season-level (not filter-affected): wRC+ and traditional slash stats.")
-pitcher_label_overrides = _PITCHER_STAT_LABELS if player_type == "Pitcher" else None
+    if _filters_active:
+        st.caption("wRC+ and RBI are full-season only (not available from Statcast pitch data).")
+    else:
+        st.caption("Full-season stats. Use sidebar filters to narrow the sample.")
+stat_label_overrides = _PITCHER_STAT_LABELS if player_type == "Pitcher" else _BATTER_STAT_LABELS
+if player_type == "Pitcher" and count_filter_note:
+    st.caption(count_filter_note)
 if comparison_mode and player_stats_b is not None and percentiles_b is not None and color_tiers_b is not None:
     col_a, col_b, col_delta = st.columns(3)
     with col_a:
@@ -1729,7 +1828,7 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
             percentiles,
             color_tiers,
             selected_stats,
-            label_overrides=pitcher_label_overrides,
+            label_overrides=stat_label_overrides,
         )
     with col_b:
         st.markdown(f"**{selected_name_b}**")
@@ -1740,7 +1839,7 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
             percentiles_b,
             color_tiers_b,
             selected_stats,
-            label_overrides=pitcher_label_overrides,
+            label_overrides=stat_label_overrides,
         )
     with col_delta:
         if season_a != season_b:
@@ -1754,7 +1853,7 @@ if comparison_mode and player_stats_b is not None and percentiles_b is not None 
             selected_stats,
             player_stats,
             player_stats_b,
-            label_overrides=pitcher_label_overrides,
+            label_overrides=stat_label_overrides,
         )
 else:
     if player_type == "Pitcher":
@@ -1770,7 +1869,13 @@ if (
     and traditional_color_tiers is not None
 ):
     _render_section_heading("Traditional Stats", top_margin_px=18)
-    st.caption("Slash line + OPS, HR, RBI (percentiles vs qualified hitters).")
+    if _filters_active:
+        st.caption(
+            "AVG, OBP, SLG, OPS, HR reflect active filters  •  "
+            "RBI is full-season (not available from Statcast)."
+        )
+    else:
+        st.caption("Slash line + OPS, HR, RBI (percentiles vs qualified hitters).")
     if (
         comparison_mode
         and traditional_stats_b is not None
@@ -1816,22 +1921,27 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 if player_type == "Pitcher":
-    mix_col, _ = st.columns([2.2, 3.8])
-    with mix_col:
-        st.caption("Batter hand")
-        pitch_mix_batter_hand = st.radio(
-            "Batter hand",
-            options=["All", "vs LHB", "vs RHB"],
-            horizontal=True,
-            key="pitch_mix_batter_hand",
-            label_visibility="collapsed",
-        )
+    show_pitch_mix_hand_control, pitch_mix_hand_note = _pitch_mix_batter_hand_ui_state(filters)
+    pitch_mix_batter_hand = "All"
+    if show_pitch_mix_hand_control:
+        mix_col, _ = st.columns([2.2, 3.8])
+        with mix_col:
+            st.caption("Batter hand")
+            pitch_mix_batter_hand = st.radio(
+                "Batter hand",
+                options=["All", "vs LHB", "vs RHB"],
+                horizontal=True,
+                key="pitch_mix_batter_hand",
+                label_visibility="collapsed",
+            )
+    elif pitch_mix_hand_note:
+        st.caption(pitch_mix_hand_note)
 
     has_stand_for_pitch_mix = "stand" in filtered_df.columns or (
         comparison_mode and filtered_df_b is not None and "stand" in filtered_df_b.columns
     )
     include_switch_hitters = True
-    if pitch_mix_batter_hand != "All" and has_stand_for_pitch_mix:
+    if show_pitch_mix_hand_control and pitch_mix_batter_hand != "All" and has_stand_for_pitch_mix:
         include_switch_hitters = st.checkbox(
             "Include switch hitters",
             value=True,
@@ -1871,7 +1981,7 @@ if FEATURE_PITCH_ZONE:
     from ui.components import render_pitch_zone_chart
 
     _pitch_zone_role = "pitcher" if player_type == "Pitcher" else "batter"
-    render_pitch_zone_chart(filtered_df, role=_pitch_zone_role)
+    render_pitch_zone_chart(filtered_df, role=_pitch_zone_role, active_filters=filters)
 
 st.divider()
 
@@ -1909,6 +2019,9 @@ st.radio(
 split_type_label = st.session_state["split_type_label"]
 split_type = SPLIT_TYPE_MAP[split_type_label]
 st.subheader(f"Splits: {split_type_label}")
+split_filter_warning = _split_filter_warning(split_type, filters)
+if split_filter_warning:
+    st.warning(split_filter_warning)
 
 if comparison_mode and statcast_df_b is not None and filtered_df_b is not None:
     left_split_col, right_split_col = st.columns(2)
@@ -2030,6 +2143,9 @@ with st.expander("Player Trend by Year", expanded=False):
         value=False,
         key="trend_apply_filters",
     )
+    trend_filter_note = _trend_filter_note(filters, apply_trend_filters)
+    if trend_filter_note:
+        st.info(trend_filter_note)
 
     # Guard: only fetch/render when user explicitly requests it.
     # This prevents N Statcast API calls on every rerun while the expander is collapsed.

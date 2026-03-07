@@ -38,9 +38,10 @@ _PCT_100_STATS = frozenset(
     ]
 )
 
-# Sources that publish percentage stats as 0-1 fractions.
-# FG stores K%, BB% etc. as 0-1; MLB API and BRef typically return 0-100.
-_SOURCES_USE_FRACTION: frozenset[str] = frozenset(["fangraphs"])
+# Sources that may publish percentage stats as 0-1 fractions.
+# FanGraphs does this broadly, and some fixture-backed app outputs still carry
+# split percentages like FB% in fraction form.
+_SOURCES_USE_FRACTION: frozenset[str] = frozenset(["app", "fangraphs"])
 
 
 def normalize_pct(

@@ -1,8 +1,9 @@
-"""FanGraphs source adapter — fetches via pybaseball.
+"""FanGraphs source adapter — extracts stats from the shared FanGraphs season pull.
 
-This is an *independent* FanGraphs pull separate from the app's own cached
-call.  It reads the same underlying data but extracts stats differently,
-so it validates the app's field-mapping and post-processing logic.
+This adapter shares the season-level fetch path with the app source so one
+yearly table can be reused across players during verification. It still
+validates the app's field-mapping and post-processing logic because it
+extracts and normalizes the row independently.
 
 Scale convention
 ----------------
@@ -23,7 +24,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pandas as pd  # noqa: E402
-import pybaseball as pb  # type: ignore[import-untyped]  # noqa: E402
+from data.fetcher import _fetch_batting_stats, _fetch_pitching_stats  # noqa: E402
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
 from tools.verification.normalization import (  # noqa: E402
@@ -144,13 +145,32 @@ def _build_stat_dict(
             val: Any = normalize_count(raw)
         elif our_key == "IP":
             val = normalize_ip(raw)
-        elif our_key in ("AVG", "OBP", "SLG", "OPS", "wOBA", "xwOBA",
-                          "ERA", "FIP", "xFIP", "SIERA", "xERA"):
+        elif our_key in (
+            "AVG",
+            "OBP",
+            "SLG",
+            "OPS",
+            "wOBA",
+            "xwOBA",
+            "ERA",
+            "FIP",
+            "xFIP",
+            "SIERA",
+            "xERA",
+        ):
             val = normalize_avg(raw)
-        elif our_key in _FG_FRACTION_COLS or our_key in ("K%", "BB%", "K-BB%",
-                                                           "HardHit%", "Barrel%",
-                                                           "GB%", "FB%", "CSW%",
-                                                           "Whiff%", "FirstStrike%"):
+        elif our_key in _FG_FRACTION_COLS or our_key in (
+            "K%",
+            "BB%",
+            "K-BB%",
+            "HardHit%",
+            "Barrel%",
+            "GB%",
+            "FB%",
+            "CSW%",
+            "Whiff%",
+            "FirstStrike%",
+        ):
             f = normalize_float(raw)
             if f is not None:
                 # FG stores these as 0-1 fractions
@@ -190,15 +210,12 @@ class FanGraphsSource(BaseSource):
                 f"requested {game_type!r} — SKIP"
             )
         if offline:
-            raise SourceError("FanGraphsSource: offline mode requires fixture — no data available")
+            raise SourceError(
+                "FanGraphsSource: offline mode requires fixture — no data available"
+            )
 
-        pb.cache.enable()
-        try:
-            df = pb.batting_stats(year, qual=10)
-        except Exception as exc:
-            raise SourceError(f"FanGraphs batting_stats({year}) failed: {exc}") from exc
-
-        if df is None or df.empty:
+        df = _fetch_batting_stats(year, min_pa=10)
+        if df.empty:
             raise SourceError(f"FanGraphs returned empty batting data for {year}")
 
         row = _extract_row(df, player)
@@ -223,15 +240,12 @@ class FanGraphsSource(BaseSource):
                 f"requested {game_type!r} — SKIP"
             )
         if offline:
-            raise SourceError("FanGraphsSource: offline mode requires fixture — no data available")
+            raise SourceError(
+                "FanGraphsSource: offline mode requires fixture — no data available"
+            )
 
-        pb.cache.enable()
-        try:
-            df = pb.pitching_stats(year, qual=5)
-        except Exception as exc:
-            raise SourceError(f"FanGraphs pitching_stats({year}) failed: {exc}") from exc
-
-        if df is None or df.empty:
+        df = _fetch_pitching_stats(year, min_ip=5)
+        if df.empty:
             raise SourceError(f"FanGraphs returned empty pitching data for {year}")
 
         row = _extract_row(df, player)

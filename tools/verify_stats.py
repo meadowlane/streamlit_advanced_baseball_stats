@@ -19,6 +19,10 @@ Usage examples
 # Verify a specific stat subset:
     python -m tools.verify_stats --year 2023 --player-type pitcher \\
         --player-ids 675911 --stats ERA FIP K% BB% --verbose
+
+# Override fixture root:
+    python -m tools.verify_stats --golden-set --offline \\
+        --fixture-root /path/to/my/fixtures
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from tools.verification.engine import (  # noqa: E402
+    GOLDEN_PLAYERS,
     run_golden_set_verification,
     run_verification,
 )
@@ -132,8 +137,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--record-fixtures",
         action="store_true",
         help=(
-            "Fetch live data and write fixtures to "
-            "tests/verification_fixtures/.  "
+            "Fetch live data and write fixtures to the fixture root.  "
             "Cannot be combined with --offline."
         ),
     )
@@ -159,6 +163,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print progress and per-player status to stderr.",
     )
+    out.add_argument(
+        "--fixture-root",
+        metavar="DIR",
+        help=(
+            "Override the fixture directory root "
+            "(default: tests/verification_fixtures/ inside the repo).  "
+            "Affects both --record-fixtures writes and --offline reads."
+        ),
+    )
 
     return parser
 
@@ -183,7 +196,9 @@ def _resolve_player_ids(
                 identities[mlbam_id] = PlayerIdentity(name=name, mlbam_id=mlbam_id)
         else:
             for mlbam_id in ids:
-                identities[mlbam_id] = PlayerIdentity(name=str(mlbam_id), mlbam_id=mlbam_id)
+                identities[mlbam_id] = PlayerIdentity(
+                    name=str(mlbam_id), mlbam_id=mlbam_id
+                )
 
     elif args.sample:
         ids, identities = _sample_players(args.year, args.player_type, args.sample)
@@ -202,7 +217,7 @@ def _lookup_players_by_name(
     For each match, attempts to cross-reference the FanGraphs ID with an MLBAM ID
     via ``pybaseball.playerid_reverse_lookup``.
     """
-    import pybaseball as pb
+    import pybaseball as pb  # type: ignore[import-untyped]
 
     pb.cache.enable()
     try:
@@ -211,7 +226,10 @@ def _lookup_players_by_name(
         else:
             df = pb.pitching_stats(year, qual=1)
     except Exception as exc:
-        print(f"[ERROR] Could not fetch FanGraphs data for name lookup: {exc}", file=sys.stderr)
+        print(
+            f"[ERROR] Could not fetch FanGraphs data for name lookup: {exc}",
+            file=sys.stderr,
+        )
         return [], {}
 
     if df is None or df.empty:
@@ -227,7 +245,10 @@ def _lookup_players_by_name(
             continue
         matches = df[df["Name"].str.lower() == name_lower]
         if matches.empty:
-            print(f"[WARN] Player '{target_name}' not found in FanGraphs {year} data.", file=sys.stderr)
+            print(
+                f"[WARN] Player '{target_name}' not found in FanGraphs {year} data.",
+                file=sys.stderr,
+            )
             continue
 
         row = matches.iloc[0]
@@ -246,16 +267,23 @@ def _lookup_players_by_name(
 
         if mlbam_id is None and fg_id is not None:
             try:
-                from pybaseball import playerid_reverse_lookup
+                from pybaseball import playerid_reverse_lookup  # type: ignore[import-untyped]
+
                 id_map = playerid_reverse_lookup([fg_id], key_type="fangraphs")
                 if not id_map.empty:
                     mlbam_raw = id_map["key_mlbam"].iloc[0]
                     mlbam_id = int(mlbam_raw)
             except Exception as exc:
-                print(f"[WARN] Could not resolve MLBAM ID for '{name}': {exc}", file=sys.stderr)
+                print(
+                    f"[WARN] Could not resolve MLBAM ID for '{name}': {exc}",
+                    file=sys.stderr,
+                )
 
         if mlbam_id is None:
-            print(f"[WARN] Could not resolve MLBAM ID for '{target_name}' — skipping.", file=sys.stderr)
+            print(
+                f"[WARN] Could not resolve MLBAM ID for '{target_name}' — skipping.",
+                file=sys.stderr,
+            )
             continue
 
         ids.append(mlbam_id)
@@ -269,32 +297,66 @@ def _sample_players(
     player_type: str,
     n: int,
 ) -> tuple[list[int], dict[int, PlayerIdentity]]:
-    """Pull a random sample of player IDs from FanGraphs season data."""
-    import pybaseball as pb
+    """Pull a random sample of player IDs from FanGraphs season data.
 
-    pb.cache.enable()
+    Resolution order:
+    1. FanGraphs batting_stats / pitching_stats via pybaseball (preferred).
+    2. MLB Stats API leaders endpoint fallback (if FG fails or produces no IDs).
+    3. Built-in golden player set as last resort (prints a WARN).
+    """
+    ids, identities = _sample_from_fangraphs(year, player_type, n)
+    if ids:
+        return ids, identities
+
+    print(
+        "[WARN] FanGraphs sample failed; trying MLB Stats API leaders ...",
+        file=sys.stderr,
+    )
+    ids, identities = _sample_from_mlb_api(year, player_type, n)
+    if ids:
+        return ids, identities
+
+    print(
+        "[WARN] MLB Stats API sample also failed; "
+        f"falling back to built-in golden set for {player_type}s.",
+        file=sys.stderr,
+    )
+    return _sample_from_golden_set(player_type, n)
+
+
+def _sample_from_fangraphs(
+    year: int,
+    player_type: str,
+    n: int,
+) -> tuple[list[int], dict[int, PlayerIdentity]]:
+    """Try to get a sample from FanGraphs via pybaseball.  Returns ([], {}) on failure."""
     try:
+        import pybaseball as pb  # type: ignore[import-untyped]
+
+        pb.cache.enable()
         if player_type == "batter":
             df = pb.batting_stats(year, qual=100)
         else:
             df = pb.pitching_stats(year, qual=20)
     except Exception as exc:
-        print(f"[ERROR] Could not fetch FanGraphs data to build sample: {exc}", file=sys.stderr)
+        print(f"  [WARN] FanGraphs fetch failed: {exc}", file=sys.stderr)
         return [], {}
 
     if df is None or df.empty:
         return [], {}
 
-    # Need MLBAM IDs
+    # Build MLBAM ID lookup
+    id_map = None
     if "key_mlbam" not in df.columns:
         try:
-            from pybaseball import playerid_reverse_lookup
+            from pybaseball import playerid_reverse_lookup  # type: ignore[import-untyped]
+
             fg_ids = df["IDfg"].dropna().astype(int).tolist()
             id_map = playerid_reverse_lookup(fg_ids, key_type="fangraphs")
+            # playerid_reverse_lookup result uses 'key_fangraphs' not 'IDfg'
         except Exception:
             id_map = None
-    else:
-        id_map = df
+    # else: key_mlbam is already in df, we can read it directly from each row
 
     sampled = df.sample(min(n, len(df)), random_state=42)
     ids: list[int] = []
@@ -304,22 +366,117 @@ def _sample_players(
         name = str(row.get("Name", "Unknown"))
         fg_id_raw = row.get("IDfg")
         fg_id = int(fg_id_raw) if fg_id_raw is not None else None
+
+        # Try direct column first
         mlbam_raw = row.get("key_mlbam")
-        if mlbam_raw is None and id_map is not None:
+
+        # If not present, look up via the reverse-lookup table
+        if mlbam_raw is None and id_map is not None and fg_id is not None:
             try:
-                match = id_map[id_map["IDfg"] == fg_id]
+                # playerid_reverse_lookup uses 'key_fangraphs' as the FG ID column
+                match = id_map[id_map["key_fangraphs"] == fg_id]
                 mlbam_raw = match["key_mlbam"].iloc[0] if not match.empty else None
             except Exception:
                 mlbam_raw = None
+
         if mlbam_raw is None:
             continue
         try:
             mlbam_id = int(mlbam_raw)
         except (TypeError, ValueError):
             continue
+
         ids.append(mlbam_id)
         identities[mlbam_id] = PlayerIdentity(name=name, mlbam_id=mlbam_id, fg_id=fg_id)
 
+    return ids, identities
+
+
+def _sample_from_mlb_api(
+    year: int,
+    player_type: str,
+    n: int,
+) -> tuple[list[int], dict[int, PlayerIdentity]]:
+    """Fetch a sample of player MLBAM IDs from the MLB Stats API leaders endpoint."""
+    try:
+        import requests
+
+        group = "hitting" if player_type == "batter" else "pitching"
+        pa_stat = "plateAppearances" if player_type == "batter" else "inningsPitched"
+        url = "https://statsapi.mlb.com/api/v1/stats/leaders"
+        params: dict[str, str | int] = {
+            "leaderCategories": pa_stat,
+            "season": year,
+            "leaderGameTypes": "R",
+            "sportId": 1,
+            "limit": max(n * 3, 60),  # fetch extra so we have room to deduplicate
+            "statGroup": group,
+        }
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        print(f"  [WARN] MLB API leaders fetch failed: {exc}", file=sys.stderr)
+        return [], {}
+
+    leaders = []
+    for category in data.get("leagueLeaders", []):
+        leaders.extend(category.get("leaders", []))
+
+    ids: list[int] = []
+    identities: dict[int, PlayerIdentity] = {}
+
+    import random
+
+    rng = random.Random(42)
+    rng.shuffle(leaders)
+
+    for entry in leaders:
+        if len(ids) >= n:
+            break
+        person = entry.get("person", {})
+        mlbam_id_raw = person.get("id")
+        name = person.get("fullName", "Unknown")
+        if mlbam_id_raw is None:
+            continue
+        try:
+            mlbam_id = int(mlbam_id_raw)
+        except (TypeError, ValueError):
+            continue
+        if mlbam_id in identities:
+            continue
+        ids.append(mlbam_id)
+        identities[mlbam_id] = PlayerIdentity(name=name, mlbam_id=mlbam_id)
+
+    return ids, identities
+
+
+def _sample_from_golden_set(
+    player_type: str,
+    n: int,
+) -> tuple[list[int], dict[int, PlayerIdentity]]:
+    """Return players from the built-in golden set matching player_type."""
+    batter_keys = {
+        "Aaron Judge 2024",
+        "Shohei Ohtani 2024",
+        "Luis Arraez 2024",
+        "Juan Soto 2024",
+    }
+    pitcher_keys = {
+        "Spencer Strider 2023",
+        "Corbin Burnes 2021",
+        "Shohei Ohtani 2023 P",
+    }
+
+    key_set = batter_keys if player_type == "batter" else pitcher_keys
+    candidates = [(k, v) for k, v in GOLDEN_PLAYERS.items() if k in key_set]
+
+    ids: list[int] = []
+    identities: dict[int, PlayerIdentity] = {}
+    for _, player in candidates[:n]:
+        if player.mlbam_id not in identities:
+            ids.append(player.mlbam_id)
+            identities[player.mlbam_id] = player
     return ids, identities
 
 
@@ -331,12 +488,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.offline and args.record_fixtures:
         parser.error("--offline and --record-fixtures are mutually exclusive.")
 
-    if not args.golden_set and not args.player_ids and not args.sample and not args.players:
+    if (
+        not args.golden_set
+        and not args.player_ids
+        and not args.sample
+        and not args.players
+    ):
         parser.error(
             "Provide --golden-set, --player-ids, --players, or --sample to select players."
         )
 
+    # --- Apply fixture root override ---
+    if args.fixture_root:
+        from tools.verification.fixtures import set_fixture_root
+
+        set_fixture_root(args.fixture_root)
+        if args.verbose:
+            print(f"[Fixtures] Root set to: {args.fixture_root}", file=sys.stderr)
+
     # --- Run ---
+    game_type = args.game_type
+
+    if args.verbose:
+        print(f"[Config] game_type={game_type}", file=sys.stderr)
+
     if args.golden_set:
         if args.verbose:
             print(
@@ -369,8 +544,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if not reports:
-        print("[ERROR] No reports generated.  Check player IDs and data availability.",
-              file=sys.stderr)
+        print(
+            "[ERROR] No reports generated.  Check player IDs and data availability.",
+            file=sys.stderr,
+        )
         return 1
 
     # --- Report ---
@@ -386,7 +563,9 @@ def main(argv: list[str] | None = None) -> int:
         print(output)
 
     # Exit code: 1 if any FAIL, else 0
+    # WARN / SKIP / NON_VERIFIABLE do NOT trigger a non-zero exit
     from tools.verification.reporting import verdict_counts
+
     counts = verdict_counts(reports)
     return 1 if counts.get("FAIL", 0) > 0 else 0
 

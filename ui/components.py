@@ -13,6 +13,7 @@ import plotly.graph_objects as go  # type: ignore[import-untyped]
 import streamlit as st
 from streamlit.elements.lib.column_types import ColumnConfig
 
+from stats.filters import SplitFilters
 from stats.percentiles import LOWER_IS_BETTER
 from stats.splits import STAT_REGISTRY
 
@@ -1171,7 +1172,39 @@ PITCH_PRESETS: dict[str, list[str] | None] = {
 }
 
 
-def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
+def _pitch_zone_hand_conflict_note(
+    role: str,
+    active_filters: SplitFilters | None,
+    hand_filter: str,
+) -> str | None:
+    """Return a warning when local hand filters contradict sidebar filters."""
+    if active_filters is None or hand_filter == "All":
+        return None
+
+    if role == "batter":
+        if active_filters.pitcher_hand is None:
+            return None
+        sidebar_label = "vs LHP" if active_filters.pitcher_hand == "L" else "vs RHP"
+        filter_label = "Pitcher hand"
+    else:
+        if active_filters.batter_hand is None:
+            return None
+        sidebar_label = "vs LHB" if active_filters.batter_hand == "L" else "vs RHB"
+        filter_label = "Batter hand"
+
+    if hand_filter == sidebar_label:
+        return None
+    return (
+        f"Pitch Location {filter_label} filter conflicts with the sidebar "
+        f"{filter_label.lower()} filter ({sidebar_label}). Clear one filter to see data."
+    )
+
+
+def render_pitch_zone_chart(
+    df: pd.DataFrame,
+    role: str = "pitcher",
+    active_filters: SplitFilters | None = None,
+) -> None:
     """Render interactive pitch-location chart with strike-zone overlay."""
     with st.expander("Pitch Location", expanded=False):
         if df.empty:
@@ -1358,6 +1391,11 @@ def render_pitch_zone_chart(df: pd.DataFrame, role: str = "pitcher") -> None:
                 options=pitch_type_options,
                 key="pitch_zone_pitch_types_advanced",
             )
+
+        conflict_note = _pitch_zone_hand_conflict_note(role, active_filters, hand_filter)
+        if conflict_note:
+            st.warning(conflict_note)
+            return
 
         filtered_df = viz_df.copy()
 

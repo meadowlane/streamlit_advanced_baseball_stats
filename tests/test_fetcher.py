@@ -26,6 +26,15 @@ from data.fetcher import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _clear_fetcher_caches():
+    _fetch_batting_stats.cache_clear()
+    _fetch_pitching_stats.cache_clear()
+    yield
+    _fetch_batting_stats.cache_clear()
+    _fetch_pitching_stats.cache_clear()
+
+
 def _make_batting_df(names=("Aaron Judge", "Shohei Ohtani")) -> pd.DataFrame:
     """Minimal FanGraphs-shaped DataFrame with all 6 core stat columns."""
     rows = []
@@ -106,6 +115,15 @@ class TestFetchBattingStats:
         mock_batting.return_value = _make_batting_df()
         _fetch_batting_stats(2024)
         mock_batting.assert_called_once_with(2024, qual=50)
+
+    @patch("data.fetcher.pb.batting_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_same_year_and_qualifier_hit_lru_cache(self, mock_cache, mock_batting):
+        mock_batting.return_value = _make_batting_df()
+        _fetch_batting_stats(2024, min_pa=10)
+        _fetch_batting_stats(2024, min_pa=10)
+        mock_cache.assert_called_once()
+        mock_batting.assert_called_once_with(2024, qual=10)
 
     @patch("data.fetcher._last_completed_season_year", return_value=2025)
     @patch("data.fetcher.pb.batting_stats")
@@ -386,6 +404,15 @@ class TestFetchPitchingStats:
         assert "warning" in df.attrs
         mock_cache.assert_called_once()
         mock_pitching.assert_called_once_with(2025, qual=20)
+
+    @patch("data.fetcher.pb.pitching_stats")
+    @patch("data.fetcher.pb.cache.enable")
+    def test_same_year_and_qualifier_hit_lru_cache(self, mock_cache, mock_pitching):
+        mock_pitching.return_value = _make_batting_df()
+        _fetch_pitching_stats(2024, min_ip=5)
+        _fetch_pitching_stats(2024, min_ip=5)
+        mock_cache.assert_called_once()
+        mock_pitching.assert_called_once_with(2024, qual=5)
 
 
 # ---------------------------------------------------------------------------
