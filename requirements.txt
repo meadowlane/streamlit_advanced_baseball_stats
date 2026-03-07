@@ -9,3 +9,4 @@ mypy>=1.10
 pandas-stubs>=2.0.0
 requests>=2.31.0
 types-requests>=2.31.0
+watchdog>=6.0.0
