@@ -31,6 +31,7 @@ from stats.splits import (
     STAT_REGISTRY,
     _compute_all_pitcher_stats,
     _compute_stats,
+    _compute_traditional_stats,
     compute_pitch_arsenal,
     get_pitcher_splits,
     get_sample_sizes,
@@ -416,6 +417,19 @@ def _as_optional_float(value: object) -> float | None:
     if pd.isna(parsed):
         return None
     return float(parsed)
+
+
+def _populate_batter_traditional_stats(raw_stats, player_row, filtered_df, filters_active):
+    raw_stats["wRC+"] = _as_optional_float(player_row.get("wRC+"))
+    raw_stats["RBI"] = _as_optional_float(player_row.get("RBI"))
+    if filters_active:
+        traditional_stats = _compute_traditional_stats(filtered_df)
+        for stat in ["AVG", "OBP", "SLG", "OPS", "HR"]:
+            raw_stats[stat] = traditional_stats.get(stat)
+    else:
+        for stat in TRADITIONAL_STATS:
+            raw_stats[stat] = _as_optional_float(player_row.get(stat))
+    return raw_stats
 
 
 def _find_case_insensitive_column(columns: list[object], candidates: list[str]) -> str | None:
@@ -1634,11 +1648,10 @@ if missing_stat_requirements:
 # the percentile chart shows where this filtered performance ranks overall.
 # ---------------------------------------------------------------------------
 
+_filters_active = active_filter_summary != "No filters (full season data)"
 _raw = _compute_all_pitcher_stats(filtered_df) if player_type == "Pitcher" else _compute_stats(filtered_df)
 if player_type == "Batter":
-    _raw["wRC+"] = _as_optional_float(player_row.get("wRC+"))
-    for stat in TRADITIONAL_STATS:
-        _raw[stat] = _as_optional_float(player_row.get(stat))
+    _raw = _populate_batter_traditional_stats(_raw, player_row, filtered_df, _filters_active)
 elif player_type == "Pitcher":
     _raw = _merge_pitcher_season_stats(_raw, pitcher_season_stats)
 player_stats = {stat: _raw.get(stat) for stat in selected_stats}
@@ -1685,9 +1698,9 @@ traditional_color_tiers_b = None
 if comparison_mode and filtered_df_b is not None:
     _raw_b = _compute_all_pitcher_stats(filtered_df_b) if player_type == "Pitcher" else _compute_stats(filtered_df_b)
     if player_type == "Batter" and player_row_b is not None:
-        _raw_b["wRC+"] = _as_optional_float(player_row_b.get("wRC+"))
-        for stat in TRADITIONAL_STATS:
-            _raw_b[stat] = _as_optional_float(player_row_b.get(stat))
+        _raw_b = _populate_batter_traditional_stats(
+            _raw_b, player_row_b, filtered_df_b, _filters_active
+        )
     elif player_type == "Pitcher":
         _raw_b = _merge_pitcher_season_stats(_raw_b, pitcher_season_stats_b)
     player_stats_b = {stat: _raw_b.get(stat) for stat in selected_stats}
@@ -1797,7 +1810,10 @@ st.subheader("Season Stats")
 if player_type == "Pitcher":
     st.caption("Season-level metrics are preserved where filter-level equivalents are unavailable.")
 else:
-    st.caption("Season-level (not filter-affected): wRC+ and traditional slash stats.")
+    if _filters_active:
+        st.caption("wRC+ and RBI are full-season only (not available from Statcast pitch data).")
+    else:
+        st.caption("Full-season stats. Use sidebar filters to narrow the sample.")
 stat_label_overrides = _PITCHER_STAT_LABELS if player_type == "Pitcher" else _BATTER_STAT_LABELS
 if player_type == "Pitcher" and count_filter_note:
     st.caption(count_filter_note)
@@ -1853,7 +1869,13 @@ if (
     and traditional_color_tiers is not None
 ):
     _render_section_heading("Traditional Stats", top_margin_px=18)
-    st.caption("Slash line + OPS, HR, RBI (percentiles vs qualified hitters).")
+    if _filters_active:
+        st.caption(
+            "AVG, OBP, SLG, OPS, HR reflect active filters  •  "
+            "RBI is full-season (not available from Statcast)."
+        )
+    else:
+        st.caption("Slash line + OPS, HR, RBI (percentiles vs qualified hitters).")
     if (
         comparison_mode
         and traditional_stats_b is not None
