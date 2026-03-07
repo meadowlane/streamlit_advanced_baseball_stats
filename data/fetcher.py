@@ -1,6 +1,7 @@
 """Data fetching layer — wraps pybaseball with Streamlit caching."""
 
 import datetime as dt
+from functools import lru_cache
 
 import streamlit as st
 import pybaseball as pb  # type: ignore[import-untyped]
@@ -94,10 +95,11 @@ def _empty_pitching_stats_df(season: int, reason: str | None = None) -> pd.DataF
 
 
 # ---------------------------------------------------------------------------
-# Pure fetch functions (no cache — called by cached wrappers; testable directly)
+# Pure fetch functions (Streamlit-free; safe for tests and verification)
 # ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=4)
 def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
     """Return FanGraphs season batting stats for all qualified batters."""
     season_int = int(season)
@@ -288,6 +290,7 @@ def _fetch_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
     return df[cols].copy()
 
 
+@lru_cache(maxsize=4)
 def _fetch_pitching_stats(season: int, min_ip: int = 20) -> pd.DataFrame:
     """Return FanGraphs season pitching stats for all qualified pitchers."""
     season_int = int(season)
@@ -329,8 +332,13 @@ def _lookup_player(last_name: str, first_name: str = "") -> pd.DataFrame:
 
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)
 def get_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
-    """Cached FanGraphs season batting stats."""
-    return _fetch_batting_stats(season, min_pa)
+    """Cached FanGraphs season batting stats for the live app.
+
+    Call the undecorated fetcher so Streamlit TTL remains the freshness policy
+    for interactive app usage; the private function's LRU cache is reserved for
+    verification/test contexts that call it directly.
+    """
+    return _fetch_batting_stats.__wrapped__(season, min_pa)
 
 
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)
@@ -347,8 +355,13 @@ def get_statcast_batter(player_mlbam_id: int, season: int) -> pd.DataFrame:
 
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)
 def get_pitching_stats(season: int, min_ip: int = 20) -> pd.DataFrame:
-    """Cached FanGraphs season pitching stats."""
-    return _fetch_pitching_stats(season, min_ip)
+    """Cached FanGraphs season pitching stats for the live app.
+
+    Call the undecorated fetcher so Streamlit TTL remains the freshness policy
+    for interactive app usage; the private function's LRU cache is reserved for
+    verification/test contexts that call it directly.
+    """
+    return _fetch_pitching_stats.__wrapped__(season, min_ip)
 
 
 @st.cache_data(ttl=_TTL_STATS, show_spinner=False)

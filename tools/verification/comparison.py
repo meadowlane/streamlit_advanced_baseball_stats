@@ -6,16 +6,19 @@ objects with PASS / FAIL / WARN / SKIP / NON_VERIFIABLE verdicts.
 
 Verdict rules
 -------------
-* **PASS**          : |our_val - src_val| ≤ tolerance for ALL available sources.
-* **FAIL**          : exceeds tolerance for ANY primary source.
-* **WARN**          : 2/3 sources agree but 1 outlier — not FAIL for that source.
+* **PASS**          : |our_val - src_val| ≤ tolerance for ALL **independent**
+                      sources that have a value.
+* **FAIL**          : exceeds tolerance for ANY independent source.
+* **WARN**          : 2/3 independent sources agree but 1 outlier (not FAIL).
 * **SKIP**          : stat cannot be compared (None on one or both sides, or
                       below minimum sample threshold).
-* **NON_VERIFIABLE**: stat has ``verifiable=False`` in STAT_MAP; always emitted
-                      with reason + fallback strategy.
+* **NON_VERIFIABLE**: stat has ``verifiable=False`` in STAT_MAP **or** fewer
+                      than 2 independent sources returned a value.
 
-When all three sources disagree with *each other* as well, FAIL is emitted
-with a note explaining that a definition mismatch is likely.
+Non-independent sources (currently StatcastSource, ``is_independent=False``)
+are shown in the report for informational purposes but **do not affect** the
+PASS/FAIL verdict.  Their presence never inflates the "confirmed by N sources"
+count.
 """
 
 from __future__ import annotations
@@ -32,6 +35,11 @@ Verdict = Literal["PASS", "FAIL", "WARN", "SKIP", "NON_VERIFIABLE", "SCOPE_MISMA
 MIN_BATTER_PA = 30
 MIN_PITCHER_BF = 30
 MIN_PITCHER_IP = 5.0
+
+# Minimum independent sources required for a PASS/FAIL verdict.
+# With only 1 independent source we can note agreement/disagreement but
+# can't call it a proper independent confirmation.
+MIN_INDEPENDENT_SOURCES_FOR_VERDICT = 1
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +60,8 @@ class StatComparison:
     note: str | None = None
     non_verifiable_reason: str | None = None
     fallback: str | None = None
+    #: Sources that were excluded from verdict (non-independent / info-only).
+    info_only_sources: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +80,8 @@ def compare_stat(
     stat: str,
     our_val: float | int | None,
     source_vals: dict[str, float | int | None],
+    *,
+    independent_sources: frozenset[str] | None = None,
 ) -> StatComparison:
     """Build a :class:`StatComparison` for one stat.
 
@@ -81,10 +93,24 @@ def compare_stat(
         The value produced by the app pipeline (from ``AppSource``).
     source_vals:
         ``{source_name: value}`` dict from all external sources.
+    independent_sources:
+        Names of sources considered independent.  Sources not in this set are
+        included in ``source_values`` for display but **excluded from verdict
+        logic**.  When ``None``, all sources are treated as independent.
     """
     mapping: StatMapping | None = STAT_MAP.get(stat)
 
-    # --- Non-verifiable ---
+    # Separate independent vs info-only source values
+    if independent_sources is not None:
+        indep_vals = {k: v for k, v in source_vals.items() if k in independent_sources}
+        info_vals = {k: v for k, v in source_vals.items() if k not in independent_sources}
+    else:
+        indep_vals = dict(source_vals)
+        info_vals = {}
+
+    info_only_sources = list(info_vals.keys())
+
+    # --- Non-verifiable (from stat_map) ---
     if mapping is not None and not mapping.verifiable:
         return StatComparison(
             stat=stat,
@@ -93,6 +119,7 @@ def compare_stat(
             verdict="NON_VERIFIABLE",
             non_verifiable_reason=mapping.non_verifiable_reason,
             fallback=mapping.fallback,
+            info_only_sources=info_only_sources,
         )
 
     # --- Skip if our value is missing ---
@@ -103,19 +130,39 @@ def compare_stat(
             source_values=source_vals,
             verdict="SKIP",
             note="App value is None — cannot compare",
+            info_only_sources=info_only_sources,
         )
 
-    # --- Compute per-source diffs ---
+    # --- Not enough independent sources → NON_VERIFIABLE ---
+    non_null_indep = {k: v for k, v in indep_vals.items() if v is not None}
+    if len(non_null_indep) < MIN_INDEPENDENT_SOURCES_FOR_VERDICT:
+        return StatComparison(
+            stat=stat,
+            our_value=our_val,
+            source_values=source_vals,
+            verdict="NON_VERIFIABLE",
+            non_verifiable_reason=(
+                f"Only {len(non_null_indep)} independent source(s) returned a value "
+                f"(need ≥{MIN_INDEPENDENT_SOURCES_FOR_VERDICT}).  "
+                "Cannot produce a reliable verdict."
+            ),
+            info_only_sources=info_only_sources,
+        )
+
+    # --- Compute per-source diffs (independent sources only for verdict) ---
     tolerance = STAT_MAP[stat].tolerance if mapping else None
     abs_diffs: dict[str, float | None] = {}
     rel_diffs: dict[str, float | None] = {}
     per_source_pass: dict[str, bool] = {}
 
+    # Compute diffs for ALL sources (for display), but only include independent
+    # ones in the pass/fail accounting.
     for src_name, src_val in source_vals.items():
         if src_val is None:
             abs_diffs[src_name] = None
             rel_diffs[src_name] = None
-            per_source_pass[src_name] = True  # can't fail what we can't measure
+            if src_name in indep_vals:
+                per_source_pass[src_name] = True  # can't fail what we can't measure
             continue
         try:
             a = float(our_val)
@@ -123,44 +170,49 @@ def compare_stat(
         except (TypeError, ValueError):
             abs_diffs[src_name] = None
             rel_diffs[src_name] = None
-            per_source_pass[src_name] = True
+            if src_name in indep_vals:
+                per_source_pass[src_name] = True
             continue
 
         ad = abs(a - b)
         abs_diffs[src_name] = round(ad, 6)
         rel_diffs[src_name] = _rel_diff(a, b)
 
-        if tolerance is not None:
-            result = tolerance.check(a, b)
-            per_source_pass[src_name] = result == "PASS"
-        else:
-            per_source_pass[src_name] = True  # no tolerance defined → skip
+        if src_name in indep_vals:
+            if tolerance is not None:
+                result = tolerance.check(a, b)
+                per_source_pass[src_name] = result == "PASS"
+            else:
+                per_source_pass[src_name] = True  # no tolerance defined → skip
 
-    # --- Determine verdict ---
+    # --- Determine verdict (based on independent sources only) ---
     verdicts = list(per_source_pass.values())
     n_fail = sum(1 for v in verdicts if not v)
     n_total = len(verdicts)
 
     if n_total == 0:
         verdict: Verdict = "SKIP"
-        note: str | None = "No source values available"
+        note: str | None = "No independent source values available"
     elif n_fail == 0:
         verdict = "PASS"
         note = None
     elif n_fail == n_total and n_total >= 2:
-        # All sources fail — check if sources agree with each other
-        non_null_src = {k: v for k, v in source_vals.items() if v is not None}
+        # All independent sources fail — check if sources agree with each other
+        non_null_src = {k: v for k, v in indep_vals.items() if v is not None}
         if _sources_agree_with_each_other(non_null_src, tolerance):
             verdict = "FAIL"
             note = (
-                f"All {n_total} sources agree with each other but differ from our value.  "
+                f"All {n_total} independent sources agree with each other but differ "
+                "from our value.  "
                 "Likely a computation or field-mapping bug in the app pipeline."
             )
         else:
             verdict = "FAIL"
             note = (
-                f"All {n_total} sources disagree (sources also disagree with each other).  "
-                "Possible definition mismatch, park-factor difference, or mid-season data artifact.  "
+                f"All {n_total} independent sources disagree (sources also disagree "
+                "with each other).  "
+                "Possible definition mismatch, park-factor difference, or mid-season "
+                "data artifact.  "
                 "Investigate each source's denominator and sample cutoff."
             )
     elif n_fail == 1 and n_total >= 3:
@@ -168,7 +220,7 @@ def compare_stat(
         failing_src = next(k for k, v in per_source_pass.items() if not v)
         verdict = "WARN"
         note = (
-            f"2/{n_total} sources match; outlier: {failing_src!r}.  "
+            f"2/{n_total} independent sources match; outlier: {failing_src!r}.  "
             "May reflect a minor definition difference for this source."
         )
     elif n_fail >= 1:
@@ -183,6 +235,7 @@ def compare_stat(
         rel_diffs=rel_diffs,
         verdict=verdict,
         note=note,
+        info_only_sources=info_only_sources,
     )
 
 
@@ -216,6 +269,7 @@ def compare_all_stats(
     sample_pa: int | None = None,
     sample_ip: float | None = None,
     player_type: str = "batter",
+    independent_sources: frozenset[str] | None = None,
 ) -> list[StatComparison]:
     """Compare all stats between the app and external sources.
 
@@ -235,6 +289,11 @@ def compare_all_stats(
         Innings pitched (decimal).  For the IP threshold check.
     player_type:
         ``"batter"`` or ``"pitcher"``.
+    independent_sources:
+        Set of source names that are independent of the app pipeline.
+        Sources absent from this set are shown as informational only and
+        do not affect PASS/FAIL verdicts.  When ``None``, all sources in
+        ``source_dicts`` are treated as independent.
     """
     # Determine which stats to check
     all_keys: set[str] = set(our_stats.keys())
@@ -269,6 +328,11 @@ def compare_all_stats(
         our_val = our_stats.get(stat)
         source_vals = {name: d.get(stat) for name, d in source_dicts.items()}
 
-        results.append(compare_stat(stat, our_val, source_vals))
+        results.append(compare_stat(
+            stat,
+            our_val,
+            source_vals,
+            independent_sources=independent_sources,
+        ))
 
     return results

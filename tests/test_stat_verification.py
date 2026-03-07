@@ -38,8 +38,10 @@ Edge cases covered
 
 from __future__ import annotations
 
+from functools import lru_cache
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -97,6 +99,7 @@ def _fixtures_present(mlbam_id: int, year: int, player_type: str) -> bool:
     return count >= 2
 
 
+@lru_cache(maxsize=None)
 def _run_offline(
     mlbam_id: int,
     year: int,
@@ -119,6 +122,53 @@ def _run_offline(
     if not reports:
         return None
     return reports[0].comparisons
+
+
+class TestVerificationStatcastCache:
+    def test_batter_cache_reuses_same_player_year(self) -> None:
+        import pandas as pd
+
+        from tools.verification.sources.statcast_cache import (
+            clear_verification_statcast_cache,
+            get_cached_batter_statcast,
+        )
+
+        clear_verification_statcast_cache()
+        with patch(
+            "tools.verification.sources.statcast_cache._fetch_statcast_batter",
+            return_value=pd.DataFrame([{"events": "single"}]),
+        ) as mock_fetch:
+            first = get_cached_batter_statcast(660271, 2024)
+            second = get_cached_batter_statcast(660271, 2024)
+
+        assert mock_fetch.call_count == 1
+        assert first.equals(second)
+        clear_verification_statcast_cache()
+
+    def test_pitcher_cache_clear_forces_refetch(self) -> None:
+        import pandas as pd
+
+        from tools.verification.sources.statcast_cache import (
+            clear_verification_statcast_cache,
+            get_cached_pitcher_statcast,
+        )
+
+        first_df = pd.DataFrame([{"events": "strikeout"}])
+        second_df = pd.DataFrame([{"events": "walk"}])
+
+        clear_verification_statcast_cache()
+        with patch(
+            "tools.verification.sources.statcast_cache._fetch_statcast_pitcher",
+            side_effect=[first_df, second_df],
+        ) as mock_fetch:
+            first = get_cached_pitcher_statcast(675911, 2023)
+            clear_verification_statcast_cache()
+            second = get_cached_pitcher_statcast(675911, 2023)
+
+        assert mock_fetch.call_count == 2
+        assert first.equals(first_df)
+        assert second.equals(second_df)
+        clear_verification_statcast_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -744,3 +794,235 @@ class TestOnlineFanGraphsAdapter:
                     f"\n[WARN] {rep.player.name} {rep.year}: FAIL on {stat_names}",
                     flush=True,
                 )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — MLB API multi-team season aggregation (no network)
+# ---------------------------------------------------------------------------
+
+
+class TestMLBApiMultiTeamAggregation:
+    """Validate _aggregate_splits and _pick_or_aggregate_splits logic.
+
+    Uses synthetic split data matching the structure returned by the MLB Stats
+    API.  No network calls are made.
+    """
+
+    def _make_split(self, **stat_overrides: Any) -> dict[str, Any]:
+        """Build a minimal MLB API split dict."""
+        defaults: dict[str, Any] = {
+            "plateAppearances": 200,
+            "atBats": 180,
+            "hits": 50,
+            "doubles": 10,
+            "triples": 1,
+            "homeRuns": 8,
+            "baseOnBalls": 15,
+            "strikeOuts": 40,
+            "hitByPitch": 2,
+            "sacFlies": 2,
+            "runs": 25,
+            "rbi": 30,
+        }
+        defaults.update(stat_overrides)
+        return {"stat": defaults, "team": {"name": "Team A"}}
+
+    def test_single_split_returned_directly(self) -> None:
+        from tools.verification.sources.mlb_api import _pick_or_aggregate_splits
+        split = self._make_split(plateAppearances=300)
+        result = _pick_or_aggregate_splits([split], "plateAppearances")
+        assert result is split
+
+    def test_total_row_preferred(self) -> None:
+        """If a 'Total' split exists it should be returned without summing."""
+        from tools.verification.sources.mlb_api import _pick_or_aggregate_splits
+        split_a = self._make_split(plateAppearances=200)
+        split_b = self._make_split(plateAppearances=150)
+        total_split = {"stat": {"plateAppearances": 350}, "team": {"name": "Total"}}
+        result = _pick_or_aggregate_splits([split_a, split_b, total_split], "plateAppearances")
+        assert result is total_split
+
+    def test_aggregate_counting_stats_summed(self) -> None:
+        """Multiple splits with no Total row should be aggregated by summing counts."""
+        from tools.verification.sources.mlb_api import _aggregate_splits
+        s1 = {"stat": {
+            "plateAppearances": 300, "atBats": 270, "hits": 81,
+            "doubles": 15, "triples": 2, "homeRuns": 20,
+            "baseOnBalls": 25, "strikeOuts": 60, "hitByPitch": 3, "sacFlies": 2,
+        }, "team": {"name": "San Diego Padres"}}
+        s2 = {"stat": {
+            "plateAppearances": 100, "atBats": 90, "hits": 28,
+            "doubles": 5, "triples": 0, "homeRuns": 8,
+            "baseOnBalls": 8, "strikeOuts": 22, "hitByPitch": 1, "sacFlies": 1,
+        }, "team": {"name": "Miami Marlins"}}
+        agg = _aggregate_splits([s1, s2])
+        stat = agg["stat"]
+        # PA must be sum
+        assert stat["plateAppearances"] == 400
+        assert stat["hits"] == 109
+        assert stat["homeRuns"] == 28
+        assert stat["baseOnBalls"] == 33
+        assert stat["strikeOuts"] == 82
+
+    def test_aggregate_avg_recalculated(self) -> None:
+        """After aggregation, AVG must be recomputed from summed H/AB."""
+        from tools.verification.sources.mlb_api import _aggregate_splits
+        s1 = {"stat": {
+            "atBats": 200, "hits": 60, "doubles": 10, "triples": 1,
+            "homeRuns": 10, "baseOnBalls": 20, "sacFlies": 2, "hitByPitch": 2,
+        }, "team": {"name": "A"}}
+        s2 = {"stat": {
+            "atBats": 100, "hits": 30, "doubles": 5, "triples": 0,
+            "homeRuns": 5, "baseOnBalls": 10, "sacFlies": 1, "hitByPitch": 1,
+        }, "team": {"name": "B"}}
+        agg = _aggregate_splits([s1, s2])
+        stat = agg["stat"]
+        expected_avg = (60 + 30) / (200 + 100)  # 90 / 300 = 0.300
+        assert float(stat["avg"]) == pytest.approx(expected_avg, abs=0.001)
+
+    def test_arraez_2024_scenario(self) -> None:
+        """Simulate Arraez 2024 multi-team scenario: two splits → correct aggregate."""
+        from tools.verification.sources.mlb_api import _pick_or_aggregate_splits, MLBApiSource
+        # Arraez 2024: traded from Marlins to Padres mid-season
+        marlins_split = {"stat": {
+            "plateAppearances": 201, "atBats": 184, "hits": 65,
+            "doubles": 11, "triples": 1, "homeRuns": 1,
+            "baseOnBalls": 14, "strikeOuts": 12, "hitByPitch": 2, "sacFlies": 1,
+            "avg": ".354", "obp": ".401", "slg": ".413", "ops": ".814",
+        }, "team": {"name": "Miami Marlins"}}
+        padres_split = {"stat": {
+            "plateAppearances": 362, "atBats": 332, "hits": 105,
+            "doubles": 16, "triples": 2, "homeRuns": 6,
+            "baseOnBalls": 22, "strikeOuts": 23, "hitByPitch": 5, "sacFlies": 3,
+            "avg": ".316", "obp": ".364", "slg": ".410", "ops": ".774",
+        }, "team": {"name": "San Diego Padres"}}
+
+        best = _pick_or_aggregate_splits([marlins_split, padres_split], "plateAppearances")
+        assert best is not None
+        stat = best["stat"]
+
+        # Season total PA must be sum of both teams
+        assert stat["plateAppearances"] == 201 + 362
+
+        # Parse as hitting stat — should produce sensible totals
+        parsed = MLBApiSource._parse_hitting_stat(stat)
+        assert parsed["PA"] == 563
+        assert parsed["H"] == 65 + 105
+        assert parsed["HR"] == 1 + 6
+
+    def test_extract_splits_prefers_season_type(self) -> None:
+        """_extract_splits should prefer the 'season' type entry."""
+        from tools.verification.sources.mlb_api import MLBApiSource
+        data = {
+            "stats": [
+                {
+                    "type": {"displayName": "career"},
+                    "splits": [{"stat": {"plateAppearances": 9999}}],
+                },
+                {
+                    "type": {"displayName": "season"},
+                    "splits": [{"stat": {"plateAppearances": 650}}],
+                },
+            ]
+        }
+        splits = MLBApiSource._extract_splits(data)
+        assert len(splits) == 1
+        assert splits[0]["stat"]["plateAppearances"] == 650
+
+    def test_extract_splits_falls_back_to_first_entry(self) -> None:
+        """When no 'season' type entry, first stats entry is used."""
+        from tools.verification.sources.mlb_api import MLBApiSource
+        data = {
+            "stats": [
+                {
+                    "type": {"displayName": "yearByYear"},
+                    "splits": [{"stat": {"plateAppearances": 500}}],
+                },
+            ]
+        }
+        splits = MLBApiSource._extract_splits(data)
+        assert splits[0]["stat"]["plateAppearances"] == 500
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — Statcast independence flag
+# ---------------------------------------------------------------------------
+
+
+class TestStatcastIndependence:
+    def test_statcast_is_not_independent(self) -> None:
+        """StatcastSource must be marked as non-independent."""
+        from tools.verification.sources.statcast import StatcastSource
+        src = StatcastSource()
+        assert not src.is_independent, (
+            "StatcastSource.is_independent must be False — it reuses app computation code"
+        )
+
+    def test_other_sources_are_independent(self) -> None:
+        from tools.verification.sources.fangraphs import FanGraphsSource
+        from tools.verification.sources.mlb_api import MLBApiSource
+        from tools.verification.sources.baseball_ref import BaseballRefSource
+
+        for cls in (FanGraphsSource, MLBApiSource, BaseballRefSource):
+            src = cls()
+            assert src.is_independent, f"{cls.__name__} should be independent"
+
+    def test_independent_sources_excluded_from_verdict(self) -> None:
+        """With statcast marked info-only, it should not affect FAIL verdict."""
+        from tools.verification.comparison import compare_stat
+
+        # Our value, FG agrees, statcast disagrees wildly
+        result = compare_stat(
+            "wOBA",
+            0.350,
+            {"fangraphs": 0.351, "statcast": 0.999},
+            independent_sources=frozenset(["fangraphs"]),
+        )
+        # statcast is NOT independent → should not cause FAIL
+        assert result.verdict == "PASS", (
+            f"Expected PASS (statcast excluded), got {result.verdict}: {result.note}"
+        )
+        assert "statcast" in result.info_only_sources
+
+    def test_engine_builds_correct_independent_set(self) -> None:
+        from tools.verification.engine import EXTERNAL_SOURCES, _build_independent_source_names
+        indep = _build_independent_source_names(EXTERNAL_SOURCES)
+        assert "statcast" not in indep, "statcast should not be in independent source set"
+        assert "fangraphs" in indep
+        assert "mlb_api" in indep
+        assert "baseball_ref" in indep
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — fixture path correctness
+# ---------------------------------------------------------------------------
+
+
+class TestFixturePath:
+    def test_fixture_dir_inside_repo(self) -> None:
+        """FIXTURE_DIR must be inside the project repo, not a parent directory."""
+        from tools.verification.fixtures import FIXTURE_DIR, _PROJECT_ROOT
+        # FIXTURE_DIR should be a child of _PROJECT_ROOT
+        assert str(FIXTURE_DIR).startswith(str(_PROJECT_ROOT)), (
+            f"FIXTURE_DIR {FIXTURE_DIR!r} is not under PROJECT_ROOT {_PROJECT_ROOT!r}"
+        )
+
+    def test_fixture_dir_correct_structure(self) -> None:
+        """Fixture dir should end with tests/verification_fixtures by default."""
+        from tools.verification.fixtures import FIXTURE_DIR
+        parts = FIXTURE_DIR.parts
+        assert "tests" in parts
+        assert "verification_fixtures" in parts
+
+    def test_set_fixture_root_override(self, tmp_path: Path) -> None:
+        """set_fixture_root should update FIXTURE_DIR and fixture_path() output."""
+        import tools.verification.fixtures as fx
+        original = fx.FIXTURE_DIR
+        try:
+            fx.set_fixture_root(tmp_path)
+            assert fx.FIXTURE_DIR == tmp_path.resolve()
+            p = fx.fixture_path("fangraphs", "batter", 592450, 2024)
+            assert str(p).startswith(str(tmp_path))
+        finally:
+            # Restore original
+            fx.FIXTURE_DIR = original
