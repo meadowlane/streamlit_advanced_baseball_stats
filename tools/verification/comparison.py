@@ -103,7 +103,9 @@ def compare_stat(
     # Separate independent vs info-only source values
     if independent_sources is not None:
         indep_vals = {k: v for k, v in source_vals.items() if k in independent_sources}
-        info_vals = {k: v for k, v in source_vals.items() if k not in independent_sources}
+        info_vals = {
+            k: v for k, v in source_vals.items() if k not in independent_sources
+        }
     else:
         indep_vals = dict(source_vals)
         info_vals = {}
@@ -322,31 +324,37 @@ def compare_all_stats(
         # --- Sample-size SKIP ---
         if player_type == "batter":
             if sample_pa is not None and sample_pa < MIN_BATTER_PA:
-                results.append(StatComparison(
-                    stat=stat,
-                    our_value=our_stats.get(stat),
-                    verdict="SKIP",
-                    note=f"Sample too small: PA={sample_pa} < {MIN_BATTER_PA}",
-                ))
+                results.append(
+                    StatComparison(
+                        stat=stat,
+                        our_value=our_stats.get(stat),
+                        verdict="SKIP",
+                        note=f"Sample too small: PA={sample_pa} < {MIN_BATTER_PA}",
+                    )
+                )
                 continue
         else:
             if sample_ip is not None and sample_ip < MIN_PITCHER_IP:
-                results.append(StatComparison(
-                    stat=stat,
-                    our_value=our_stats.get(stat),
-                    verdict="SKIP",
-                    note=f"Sample too small: IP={sample_ip:.1f} < {MIN_PITCHER_IP}",
-                ))
+                results.append(
+                    StatComparison(
+                        stat=stat,
+                        our_value=our_stats.get(stat),
+                        verdict="SKIP",
+                        note=f"Sample too small: IP={sample_ip:.1f} < {MIN_PITCHER_IP}",
+                    )
+                )
                 continue
 
         our_val = our_stats.get(stat)
         source_vals = {name: d.get(stat) for name, d in source_dicts.items()}
 
-        results.append(compare_stat(
-            stat,
-            our_val,
-            source_vals,
-            independent_sources=independent_sources,
-        ))
+        results.append(
+            compare_stat(
+                stat,
+                our_val,
+                source_vals,
+                independent_sources=independent_sources,
+            )
+        )
 
     return results

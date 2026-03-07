@@ -98,10 +98,8 @@ def top_discrepancies(
     include_verdicts: frozenset[str] = frozenset(["FAIL", "WARN"]),
 ) -> list[dict[str, Any]]:
     """Return the *n* worst discrepancies sorted by maximum absolute diff."""
-    rows = [
-        r for r in summary_rows(reports)
-        if r["verdict"] in include_verdicts
-    ]
+    rows = [r for r in summary_rows(reports) if r["verdict"] in include_verdicts]
+
     # Sort by max abs diff across all sources
     def _max_abs(r: dict[str, Any]) -> float:
         diffs = [v for k, v in r.items() if k.startswith("absdiff_") and v is not None]
@@ -112,8 +110,12 @@ def top_discrepancies(
 
 def verdict_counts(reports: list[PlayerReport]) -> dict[str, int]:
     counts: dict[str, int] = {
-        "PASS": 0, "FAIL": 0, "WARN": 0, "SKIP": 0,
-        "NON_VERIFIABLE": 0, "SCOPE_MISMATCH": 0,
+        "PASS": 0,
+        "FAIL": 0,
+        "WARN": 0,
+        "SKIP": 0,
+        "NON_VERIFIABLE": 0,
+        "SCOPE_MISMATCH": 0,
     }
     for rep in reports:
         for cmp in rep.comparisons:
@@ -157,10 +159,14 @@ def _text_report(reports: list[PlayerReport]) -> str:
     if top:
         lines.append("TOP DISCREPANCIES")
         lines.append("-" * 70)
-        lines.append(f"  {'Player':<20} {'Stat':<14} {'Ours':>8} {'MaxAbsDiff':>10} {'Verdict':<14}")
-        lines.append(f"  {'-'*20} {'-'*14} {'-'*8} {'-'*10} {'-'*14}")
+        lines.append(
+            f"  {'Player':<20} {'Stat':<14} {'Ours':>8} {'MaxAbsDiff':>10} {'Verdict':<14}"
+        )
+        lines.append(f"  {'-' * 20} {'-' * 14} {'-' * 8} {'-' * 10} {'-' * 14}")
         for r in top:
-            diffs = {k: v for k, v in r.items() if k.startswith("absdiff_") and v is not None}
+            diffs = {
+                k: v for k, v in r.items() if k.startswith("absdiff_") and v is not None
+            }
             max_d = max(diffs.values()) if diffs else 0.0
             lines.append(
                 f"  {r['player']:<20} {r['stat']:<14} {_fmt(r['our_value']):>8} "
@@ -170,12 +176,14 @@ def _text_report(reports: list[PlayerReport]) -> str:
 
     # Per-player drilldown
     for rep in reports:
-        lines.append(f"{'─'*70}")
+        lines.append(f"{'─' * 70}")
         lines.append(
             f"  {rep.player.name}  |  {rep.year}  |  {rep.player_type.upper()}"
             f"  |  scope: {rep.game_type}"
         )
-        sample_str = ", ".join(f"{k}={v}" for k, v in rep.sample_notes.items() if v is not None)
+        sample_str = ", ".join(
+            f"{k}={v}" for k, v in rep.sample_notes.items() if v is not None
+        )
         if sample_str:
             lines.append(f"  Sample: {sample_str}")
         # Show PA breakdown if available and non-empty
@@ -186,7 +194,7 @@ def _text_report(reports: list[PlayerReport]) -> str:
             lines.append(f"  PA by game_type: {breakdown_str}")
         lines.append("")
         lines.append(f"  {'Stat':<14} {'Ours':>8} {'Sources':<38} {'V':>4}  Note")
-        lines.append(f"  {'-'*14} {'-'*8} {'-'*38} {'-'*4}  {'-'*20}")
+        lines.append(f"  {'-' * 14} {'-' * 8} {'-' * 38} {'-' * 4}  {'-' * 20}")
         for cmp in rep.comparisons:
             src_str = "  ".join(
                 f"{k}={_fmt(v)}" for k, v in cmp.source_values.items() if v is not None
@@ -221,7 +229,8 @@ def _csv_report(reports: list[PlayerReport]) -> str:
     if not rows:
         return ""
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    fieldnames = list(dict.fromkeys(key for row in rows for key in row.keys()))
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(rows)
     return buf.getvalue()
@@ -290,7 +299,9 @@ def _html_report(reports: list[PlayerReport]) -> str:
 
     rows_html = ""
     for r in top:
-        diffs = {k: v for k, v in r.items() if k.startswith("absdiff_") and v is not None}
+        diffs = {
+            k: v for k, v in r.items() if k.startswith("absdiff_") and v is not None
+        }
         max_d = max(diffs.values()) if diffs else 0.0
         style = _VERDICT_STYLE.get(r["verdict"], "")
         rows_html += (
@@ -325,7 +336,9 @@ def _html_report(reports: list[PlayerReport]) -> str:
         )
         pa_breakdown_str = ""
         if rep.pa_by_game_type:
-            pairs = "  ".join(f"{gt}={n}" for gt, n in sorted(rep.pa_by_game_type.items()))
+            pairs = "  ".join(
+                f"{gt}={n}" for gt, n in sorted(rep.pa_by_game_type.items())
+            )
             pa_breakdown_str = f"<p style='color:#856404;font-family:monospace'>PA by game_type: {pairs}</p>"
         player_sections += f"""
         <h3>{rep.player.name} — {rep.year} ({rep.player_type}) <small style='color:#888'>scope: {rep.game_type}</small></h3>
@@ -360,12 +373,12 @@ def _html_report(reports: list[PlayerReport]) -> str:
   <h1>Baseball Stats Verification Report</h1>
   <p><strong>Game type scope:</strong> {active_scope}</p>
   <p>
-    <span class='badge badge-pass'>PASS {counts['PASS']}</span>
-    <span class='badge badge-fail'>FAIL {counts['FAIL']}</span>
-    <span class='badge badge-warn'>WARN {counts['WARN']}</span>
-    <span class='badge badge-scope'>SCOPE_MISMATCH {counts['SCOPE_MISMATCH']}</span>
-    <span class='badge badge-skip'>SKIP {counts['SKIP']}</span>
-    <span class='badge badge-nv'>NON_VER {counts['NON_VERIFIABLE']}</span>
+    <span class='badge badge-pass'>PASS {counts["PASS"]}</span>
+    <span class='badge badge-fail'>FAIL {counts["FAIL"]}</span>
+    <span class='badge badge-warn'>WARN {counts["WARN"]}</span>
+    <span class='badge badge-scope'>SCOPE_MISMATCH {counts["SCOPE_MISMATCH"]}</span>
+    <span class='badge badge-skip'>SKIP {counts["SKIP"]}</span>
+    <span class='badge badge-nv'>NON_VER {counts["NON_VERIFIABLE"]}</span>
     &nbsp; Pass rate: <strong>{pass_pct:.1f}%</strong> of {total} checks
   </p>
 

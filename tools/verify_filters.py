@@ -40,9 +40,24 @@ SUMMARY_DIR = _FILTER_FIXTURE_ROOT / "summaries"
 SEED_PLAYERS = [
     {"player_type": "batter", "mlbam_id": 592450, "year": 2024, "name": "Aaron Judge"},
     {"player_type": "batter", "mlbam_id": 665742, "year": 2024, "name": "Juan Soto"},
-    {"player_type": "batter", "mlbam_id": 660271, "year": 2024, "name": "Shohei Ohtani"},
-    {"player_type": "pitcher", "mlbam_id": 675911, "year": 2023, "name": "Spencer Strider"},
-    {"player_type": "pitcher", "mlbam_id": 669203, "year": 2021, "name": "Corbin Burnes"},
+    {
+        "player_type": "batter",
+        "mlbam_id": 660271,
+        "year": 2024,
+        "name": "Shohei Ohtani",
+    },
+    {
+        "player_type": "pitcher",
+        "mlbam_id": 675911,
+        "year": 2023,
+        "name": "Spencer Strider",
+    },
+    {
+        "player_type": "pitcher",
+        "mlbam_id": 669203,
+        "year": 2021,
+        "name": "Corbin Burnes",
+    },
 ]
 
 _KNOWN_BBREF_IDS = {
@@ -77,7 +92,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def _record_raw_fixture(player: dict[str, Any]) -> None:
     """Fetch raw Statcast data and save as parquet fixture."""
     try:
-        import pybaseball as pb
+        import pybaseball as pb  # type: ignore[import-untyped]
     except ImportError:
         print("ERROR: pybaseball is required for recording fixtures.")
         print("  pip install pybaseball")
@@ -90,7 +105,9 @@ def _record_raw_fixture(player: dict[str, Any]) -> None:
     year = player["year"]
     name = player["name"]
 
-    print(f"Fetching Statcast raw fixture for {name} ({player_type}, {mlbam_id}, {year})...")
+    print(
+        f"Fetching Statcast raw fixture for {name} ({player_type}, {mlbam_id}, {year})..."
+    )
 
     start_date = f"{year}-01-01"
     end_date = f"{year}-12-31"
@@ -289,7 +306,7 @@ def _record_baseball_ref_handed_split_summaries(player: dict[str, Any], pb) -> N
 def _record_summary_fixture(player: dict[str, Any]) -> None:
     """Fetch external summary fixtures used by filter verification tests."""
     try:
-        import pybaseball as pb
+        import pybaseball as pb  # type: ignore[import-untyped]
     except ImportError:
         print("WARNING: pybaseball not installed; skipping summary fixture recording.")
         return
@@ -365,7 +382,9 @@ class FilterValidationPlugin:
 
     def _record_outcome(self, nodeid: str, status: str, reason: str | None) -> None:
         previous = self._node_outcomes.get(nodeid)
-        if previous is None or (previous[0] == "skipped" and status in {"passed", "failed"}):
+        if previous is None or (
+            previous[0] == "skipped" and status in {"passed", "failed"}
+        ):
             self._node_outcomes[nodeid] = (status, reason)
 
     @staticmethod
@@ -377,7 +396,7 @@ class FilterValidationPlugin:
             reason = str(longrepr)
         reason = reason.strip()
         if reason.startswith("Skipped:"):
-            reason = reason[len("Skipped:"):].strip()
+            reason = reason[len("Skipped:") :].strip()
         return reason
 
     def _counts_for(self, nodeids: set[str]) -> dict[str, int]:
@@ -438,7 +457,9 @@ def _gate_failures(summary: dict[str, Any]) -> list[str]:
     external = summary["external"]
 
     if real["selected"] == 0:
-        failures.append("No real-fixture tests were collected for this filter selection.")
+        failures.append(
+            "No real-fixture tests were collected for this filter selection."
+        )
         return failures
 
     if real["passed"] == 0 and real["failed"] == 0:

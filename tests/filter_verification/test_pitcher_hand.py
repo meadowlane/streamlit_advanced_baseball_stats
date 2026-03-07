@@ -13,15 +13,8 @@ Verification strategy:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pandas as pd
 import pytest
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from tests.reference_calc import (
     compute_pa,
@@ -34,7 +27,6 @@ from tests.filter_verification.conftest import (
     SEED_BATTERS,
     load_raw_fixture,
     load_summary_fixture,
-    make_synthetic_statcast_df,
 )
 
 # ---------------------------------------------------------------------------
@@ -73,9 +65,7 @@ class TestPitcherHandInvariantsSynthetic:
 
         for hand in ("L", "R"):
             pa_hand = compute_pa(filter_pitcher_hand(synthetic_df, hand))
-            assert pa_hand < pa_all, (
-                f"vs {hand}HP: PA={pa_hand} not < total {pa_all}"
-            )
+            assert pa_hand < pa_all, f"vs {hand}HP: PA={pa_hand} not < total {pa_all}"
             assert pa_hand > 0, f"vs {hand}HP: PA=0, expected some data"
 
     def test_lr_rows_disjoint(self, synthetic_df: pd.DataFrame) -> None:
@@ -182,7 +172,9 @@ class TestPitcherHandAppVsReferenceSynthetic:
 
         for hand, label in [("R", "vs RHP"), ("L", "vs LHP")]:
             split_rows = split_result[split_result["Split"] == label]
-            assert len(split_rows) == 1, f"Expected 1 row for {label}, got {len(split_rows)}"
+            assert len(split_rows) == 1, (
+                f"Expected 1 row for {label}, got {len(split_rows)}"
+            )
             split_row = split_rows.iloc[0]
 
             filtered = apply_filters(synthetic_df, SplitFilters(pitcher_hand=hand))
@@ -316,13 +308,15 @@ class TestPitcherHandRegression:
 
     def test_empty_hand_filter(self) -> None:
         """Filtering by a hand value that doesn't exist should return 0 PA."""
-        df = pd.DataFrame({
-            "events": ["single", "strikeout"],
-            "p_throws": ["R", "R"],
-            "launch_speed": [95.0, float("nan")],
-            "launch_speed_angle": [6.0, float("nan")],
-            "bb_type": ["fly_ball", None],
-            "estimated_woba_using_speedangle": [0.5, float("nan")],
-        })
+        df = pd.DataFrame(
+            {
+                "events": ["single", "strikeout"],
+                "p_throws": ["R", "R"],
+                "launch_speed": [95.0, float("nan")],
+                "launch_speed_angle": [6.0, float("nan")],
+                "bb_type": ["fly_ball", None],
+                "estimated_woba_using_speedangle": [0.5, float("nan")],
+            }
+        )
         result = filter_pitcher_hand(df, "L")
         assert compute_pa(result) == 0

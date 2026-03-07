@@ -454,16 +454,8 @@ def compute_pitch_arsenal(df: pd.DataFrame) -> pd.DataFrame:
         if swings > 0:
             whiff_pct = round((whiffs / swings) * 100.0, 1)
 
-        velo = (
-            grp["release_speed"].mean()
-            if has_velo
-            else float("nan")
-        )
-        spin = (
-            grp["release_spin_rate"].mean()
-            if has_spin
-            else float("nan")
-        )
+        velo = grp["release_speed"].mean() if has_velo else float("nan")
+        spin = grp["release_spin_rate"].mean() if has_spin else float("nan")
 
         rows.append(
             {

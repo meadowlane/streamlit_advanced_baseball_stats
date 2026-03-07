@@ -145,13 +145,32 @@ def _build_stat_dict(
             val: Any = normalize_count(raw)
         elif our_key == "IP":
             val = normalize_ip(raw)
-        elif our_key in ("AVG", "OBP", "SLG", "OPS", "wOBA", "xwOBA",
-                          "ERA", "FIP", "xFIP", "SIERA", "xERA"):
+        elif our_key in (
+            "AVG",
+            "OBP",
+            "SLG",
+            "OPS",
+            "wOBA",
+            "xwOBA",
+            "ERA",
+            "FIP",
+            "xFIP",
+            "SIERA",
+            "xERA",
+        ):
             val = normalize_avg(raw)
-        elif our_key in _FG_FRACTION_COLS or our_key in ("K%", "BB%", "K-BB%",
-                                                           "HardHit%", "Barrel%",
-                                                           "GB%", "FB%", "CSW%",
-                                                           "Whiff%", "FirstStrike%"):
+        elif our_key in _FG_FRACTION_COLS or our_key in (
+            "K%",
+            "BB%",
+            "K-BB%",
+            "HardHit%",
+            "Barrel%",
+            "GB%",
+            "FB%",
+            "CSW%",
+            "Whiff%",
+            "FirstStrike%",
+        ):
             f = normalize_float(raw)
             if f is not None:
                 # FG stores these as 0-1 fractions
@@ -191,7 +210,9 @@ class FanGraphsSource(BaseSource):
                 f"requested {game_type!r} — SKIP"
             )
         if offline:
-            raise SourceError("FanGraphsSource: offline mode requires fixture — no data available")
+            raise SourceError(
+                "FanGraphsSource: offline mode requires fixture — no data available"
+            )
 
         df = _fetch_batting_stats(year, min_pa=10)
         if df.empty:
@@ -219,7 +240,9 @@ class FanGraphsSource(BaseSource):
                 f"requested {game_type!r} — SKIP"
             )
         if offline:
-            raise SourceError("FanGraphsSource: offline mode requires fixture — no data available")
+            raise SourceError(
+                "FanGraphsSource: offline mode requires fixture — no data available"
+            )
 
         df = _fetch_pitching_stats(year, min_ip=5)
         if df.empty:

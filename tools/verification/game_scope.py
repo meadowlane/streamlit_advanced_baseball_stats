@@ -69,10 +69,10 @@ ALL_GAME_TYPES: frozenset[str] = (
 #: Scopes supported by each verification source.
 #: Sources that don't support the requested scope are skipped (not failed).
 SOURCE_SCOPE_SUPPORT: dict[str, frozenset[str]] = {
-    "app":          frozenset(["regular", "postseason", "all"]),
-    "statcast":     frozenset(["regular", "postseason", "all"]),
-    "fangraphs":    frozenset(["regular"]),
-    "mlb_api":      frozenset(["regular"]),
+    "app": frozenset(["regular", "postseason", "all"]),
+    "statcast": frozenset(["regular", "postseason", "all"]),
+    "fangraphs": frozenset(["regular"]),
+    "mlb_api": frozenset(["regular"]),
     "baseball_ref": frozenset(["regular"]),
 }
 

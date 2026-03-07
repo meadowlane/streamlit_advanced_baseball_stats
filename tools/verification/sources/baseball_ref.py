@@ -20,25 +20,19 @@ Limitations
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+import pandas as pd
+import pybaseball as pb  # type: ignore[import-untyped]
 
-import pandas as pd  # noqa: E402
-import pybaseball as pb  # type: ignore[import-untyped]  # noqa: E402
-
-from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
-from tools.verification.normalization import (  # noqa: E402
+from tools.verification.normalization import (
     normalize_count,
     normalize_float,
     normalize_avg,
     normalize_ip,
     normalize_player_name,
 )
+from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError
 
 
 def _find_player_row(
@@ -78,7 +72,10 @@ def _find_player_row(
         if pa_col in matches.columns:
             numeric = pd.to_numeric(matches[pa_col], errors="coerce")
             idx = numeric.idxmax()
-            return matches.loc[idx]
+            row = matches.loc[idx]
+            if isinstance(row, pd.DataFrame):
+                return row.iloc[0]
+            return row
 
     return matches.iloc[0]
 
@@ -230,7 +227,9 @@ class BaseballRefSource(BaseSource):
         try:
             df = pb.pitching_stats_bref(year)
         except Exception as exc:
-            raise SourceError(f"BRef pitching_stats_bref({year}) failed: {exc}") from exc
+            raise SourceError(
+                f"BRef pitching_stats_bref({year}) failed: {exc}"
+            ) from exc
 
         if df is None or df.empty:
             raise SourceError(f"BRef returned empty pitching data for {year}")

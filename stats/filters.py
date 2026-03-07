@@ -441,7 +441,10 @@ def apply_filters(
             mask &= df[_MONTH_COL] == filters.month
         elif _col_ok(df, "game_date", "month"):
             applied_mask = True
-            mask &= pd.to_datetime(df["game_date"], errors="coerce").dt.month == filters.month
+            mask &= (
+                pd.to_datetime(df["game_date"], errors="coerce").dt.month
+                == filters.month
+            )
 
     # --- count: balls ----------------------------------------------------
     if filters.balls is not None:

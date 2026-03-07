@@ -34,12 +34,7 @@ Fixture strategy
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Any, Literal
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError
 from tools.verification.sources.app_source import AppSource
@@ -270,19 +265,17 @@ def _apply_scope_mismatch_verdicts(
     """
     # Count PA from non-regular game types
     extra_pa = sum(
-        count for gt, count in pa_by_game_type.items()
-        if gt not in REGULAR_GAME_TYPES
+        count for gt, count in pa_by_game_type.items() if gt not in REGULAR_GAME_TYPES
     )
     if extra_pa == 0:
         return comparisons
 
     non_regular = {
-        gt: count for gt, count in pa_by_game_type.items()
+        gt: count
+        for gt, count in pa_by_game_type.items()
         if gt not in REGULAR_GAME_TYPES
     }
-    breakdown_str = "  ".join(
-        f"{gt}={n}" for gt, n in sorted(non_regular.items())
-    )
+    breakdown_str = "  ".join(f"{gt}={n}" for gt, n in sorted(non_regular.items()))
 
     # Stats directly affected by game-scope: counting stats and PA-derived rates
     scope_sensitive = frozenset(["PA", "H", "HR", "BB", "SO", "HBP"])
@@ -377,7 +370,7 @@ def run_verification(
 
     try:
         for mlbam_id in player_ids:
-        # Resolve or build a minimal PlayerIdentity
+            # Resolve or build a minimal PlayerIdentity
             if player_identities and mlbam_id in player_identities:
                 player = player_identities[mlbam_id]
             else:
@@ -392,12 +385,18 @@ def run_verification(
 
             # 1. App stats
             app_raw = _fetch_app_stats(
-                player, year, player_type,
+                player,
+                year,
+                player_type,
                 game_type=game_type,
-                offline=offline, record=record_fixtures,
+                offline=offline,
+                record=record_fixtures,
             )
             if app_raw is None:
-                print(f"  [SKIP] Could not fetch app stats for {player.name}", file=sys.stderr)
+                print(
+                    f"  [SKIP] Could not fetch app stats for {player.name}",
+                    file=sys.stderr,
+                )
                 continue
 
             # Extract diagnostic metadata before normalizing
@@ -410,13 +409,19 @@ def run_verification(
             source_dicts: dict[str, dict[str, Any]] = {}
             for src in EXTERNAL_SOURCES:
                 raw = _fetch_with_fixture_support(
-                    src, player, year, player_type,
+                    src,
+                    player,
+                    year,
+                    player_type,
                     game_type=game_type,
-                    offline=offline, record=record_fixtures,
+                    offline=offline,
+                    record=record_fixtures,
                     verbose=verbose,
                 )
                 if raw is not None:
-                    source_dicts[src.source_name] = _normalize_source_dict(raw, src.source_name)
+                    source_dicts[src.source_name] = _normalize_source_dict(
+                        raw, src.source_name
+                    )
 
             if not source_dicts and verbose:
                 print(
@@ -446,7 +451,9 @@ def run_verification(
             )
 
             if game_type == "regular" and pa_by_game_type:
-                comparisons = _apply_scope_mismatch_verdicts(comparisons, pa_by_game_type)
+                comparisons = _apply_scope_mismatch_verdicts(
+                    comparisons, pa_by_game_type
+                )
 
             report = PlayerReport(
                 player=player,

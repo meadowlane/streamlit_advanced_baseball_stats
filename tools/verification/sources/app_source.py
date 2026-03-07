@@ -40,21 +40,52 @@ from tools.verification.game_scope import (  # noqa: E402
 
 # Pitcher FG passthrough columns we want to expose alongside the Statcast stats.
 _FG_PITCHER_PASSTHROUGHS = [
-    "ERA", "FIP", "xFIP", "SIERA", "xERA",
-    "W", "L", "IP",
-    "wOBA", "xwOBA",
-    "K%", "BB%", "GB%", "FB%",
-    "HardHit%", "Barrel%",
-    "FBv", "Stuff+", "Location+", "Pitching+",
-    "CSW%", "Whiff%", "F-Strike%",
+    "ERA",
+    "FIP",
+    "xFIP",
+    "SIERA",
+    "xERA",
+    "W",
+    "L",
+    "IP",
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "GB%",
+    "FB%",
+    "HardHit%",
+    "Barrel%",
+    "FBv",
+    "Stuff+",
+    "Location+",
+    "Pitching+",
+    "CSW%",
+    "Whiff%",
+    "F-Strike%",
 ]
 
 # Batter FG passthrough columns
 _FG_BATTER_PASSTHROUGHS = [
-    "wRC+", "wOBA", "xwOBA",
-    "K%", "BB%", "HardHit%", "Barrel%", "GB%", "FB%",
-    "AVG", "OBP", "SLG", "OPS",
-    "PA", "H", "HR", "BB", "SO", "HBP",
+    "wRC+",
+    "wOBA",
+    "xwOBA",
+    "K%",
+    "BB%",
+    "HardHit%",
+    "Barrel%",
+    "GB%",
+    "FB%",
+    "AVG",
+    "OBP",
+    "SLG",
+    "OPS",
+    "PA",
+    "H",
+    "HR",
+    "BB",
+    "SO",
+    "HBP",
 ]
 
 
@@ -64,6 +95,7 @@ def _safe_get(row: Any, col: str) -> Any:
         val = row[col]
         # pandas NA → None
         import pandas as pd  # local import to avoid top-level pandas dependency issues
+
         if pd.isna(val):
             return None
         return val

@@ -13,21 +13,10 @@ Verification strategy:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
-# Ensure project root is on path for production code imports
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 from tests.reference_calc import (
-    PA_EVENTS,
-    REGULAR_GAME_TYPES,
-    POSTSEASON_GAME_TYPES,
     compute_pa,
     compute_reference_stats,
     compute_stats,
@@ -35,10 +24,8 @@ from tests.reference_calc import (
 )
 from tests.filter_verification.conftest import (
     SEED_BATTERS,
-    SEED_PLAYERS,
     load_raw_fixture,
     load_summary_fixture,
-    make_synthetic_statcast_df,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,7 +45,9 @@ EXTERNAL_PA_TOL = 2  # FG may differ by 1-2 due to late corrections
 class TestGameScopeInvariantsSynthetic:
     """Structural invariants using synthetic data (always available)."""
 
-    def test_regular_plus_postseason_equals_all(self, synthetic_df: pd.DataFrame) -> None:
+    def test_regular_plus_postseason_equals_all(
+        self, synthetic_df: pd.DataFrame
+    ) -> None:
         """PA(regular) + PA(postseason) must equal PA(all)."""
         pa_all = compute_pa(synthetic_df)
         pa_reg = compute_pa(filter_scope(synthetic_df, "regular"))
@@ -96,9 +85,7 @@ class TestGameScopeInvariantsSynthetic:
             f"{len(overlap)} rows appear in both regular and postseason"
         )
 
-    def test_filtered_counts_never_increase(
-        self, synthetic_df: pd.DataFrame
-    ) -> None:
+    def test_filtered_counts_never_increase(self, synthetic_df: pd.DataFrame) -> None:
         """Filtered PA must be <= unfiltered PA for any scope."""
         pa_all = compute_pa(synthetic_df)
 
@@ -127,8 +114,14 @@ class TestGameScopeInvariantsSynthetic:
     ) -> None:
         """Verify synthetic data has the expected structure."""
         assert compute_pa(synthetic_df) == synthetic_df_counts["total_pa"]
-        assert compute_pa(filter_scope(synthetic_df, "regular")) == synthetic_df_counts["regular_pa"]
-        assert compute_pa(filter_scope(synthetic_df, "postseason")) == synthetic_df_counts["postseason_pa"]
+        assert (
+            compute_pa(filter_scope(synthetic_df, "regular"))
+            == synthetic_df_counts["regular_pa"]
+        )
+        assert (
+            compute_pa(filter_scope(synthetic_df, "postseason"))
+            == synthetic_df_counts["postseason_pa"]
+        )
 
 
 # ===================================================================
@@ -284,7 +277,9 @@ class TestGameScopeRealFixtures:
 class TestGameScopeRegression:
     """Specific regression cases for known scope bugs."""
 
-    def test_unfiltered_all_includes_postseason(self, synthetic_df: pd.DataFrame) -> None:
+    def test_unfiltered_all_includes_postseason(
+        self, synthetic_df: pd.DataFrame
+    ) -> None:
         """Without scope filtering, PA should include postseason — this is the bug scenario."""
         # If someone computes stats without filtering, they get inflated PA
         pa_all = compute_pa(synthetic_df)
@@ -298,15 +293,19 @@ class TestGameScopeRegression:
 
     def test_game_type_column_required(self) -> None:
         """When game_type column is missing, filter_scope returns all data (documented behavior)."""
-        df = pd.DataFrame({
-            "events": ["single", "strikeout", "walk"],
-            "batter": [1, 1, 1],
-        })
+        df = pd.DataFrame(
+            {
+                "events": ["single", "strikeout", "walk"],
+                "batter": [1, 1, 1],
+            }
+        )
         # Reference should return all rows when game_type is absent
         filtered = filter_scope(df, "regular")
         assert len(filtered) == len(df)
 
-    def test_scope_filter_preserves_all_columns(self, synthetic_df: pd.DataFrame) -> None:
+    def test_scope_filter_preserves_all_columns(
+        self, synthetic_df: pd.DataFrame
+    ) -> None:
         """Scope filtering must not drop or add columns."""
         original_cols = set(synthetic_df.columns)
         filtered = filter_scope(synthetic_df, "regular")

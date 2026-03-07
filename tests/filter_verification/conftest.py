@@ -51,26 +51,44 @@ def _summary_fixture_candidates(
     for source_name in sources:
         paths.extend(
             [
-                _FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}_{split}.json",
+                _FILTER_FIXTURE_ROOT
+                / "summaries"
+                / source_name
+                / f"{base_name}_{split}.json",
                 _FIXTURE_ROOT / source_name / f"{base_name}_{split}.json",
-                _LEGACY_FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}_{split}.json",
+                _LEGACY_FILTER_FIXTURE_ROOT
+                / "summaries"
+                / source_name
+                / f"{base_name}_{split}.json",
             ]
         )
         if split == "full":
             paths.extend(
                 [
-                    _FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}.json",
+                    _FILTER_FIXTURE_ROOT
+                    / "summaries"
+                    / source_name
+                    / f"{base_name}.json",
                     _FIXTURE_ROOT / source_name / f"{base_name}.json",
-                    _LEGACY_FILTER_FIXTURE_ROOT / "summaries" / source_name / f"{base_name}.json",
+                    _LEGACY_FILTER_FIXTURE_ROOT
+                    / "summaries"
+                    / source_name
+                    / f"{base_name}.json",
                 ]
             )
     return paths
 
 
 @lru_cache(maxsize=None)
-def _resolve_raw_fixture_path(player_type: str, mlbam_id: int, year: int) -> Path | None:
+def _resolve_raw_fixture_path(
+    player_type: str, mlbam_id: int, year: int
+) -> Path | None:
     return next(
-        (candidate for candidate in _raw_fixture_candidates(player_type, mlbam_id, year) if candidate.exists()),
+        (
+            candidate
+            for candidate in _raw_fixture_candidates(player_type, mlbam_id, year)
+            if candidate.exists()
+        ),
         None,
     )
 
@@ -84,7 +102,9 @@ def _load_raw_fixture_cached(
 ) -> pd.DataFrame:
     path = _resolve_raw_fixture_path(player_type, mlbam_id, year)
     if path is None:
-        raise FileNotFoundError(f"Missing raw fixture for {player_type}_{mlbam_id}_{year}")
+        raise FileNotFoundError(
+            f"Missing raw fixture for {player_type}_{mlbam_id}_{year}"
+        )
 
     df = pd.read_parquet(path)
     if scope != "all":
@@ -118,6 +138,7 @@ def _load_summary_fixture_cached(
 
         return data.get("stats", data)
     return None
+
 
 # ---------------------------------------------------------------------------
 # Seed player registry
@@ -205,27 +226,49 @@ def make_synthetic_statcast_df(
 
     # Events cycle (deterministic mix of outcomes)
     events_pool = [
-        "single", "single", "single", "single",          # 4 singles
-        "double", "double",                                # 2 doubles
-        "triple",                                          # 1 triple
-        "home_run", "home_run",                            # 2 HRs
-        "walk", "walk", "walk",                            # 3 walks
-        "intent_walk",                                     # 1 IBB
-        "hit_by_pitch",                                    # 1 HBP
-        "strikeout", "strikeout", "strikeout", "strikeout", "strikeout",  # 5 Ks
-        "field_out", "field_out", "field_out", "field_out", "field_out",  # 5 FOs
-        "field_out", "field_out",                          # 2 more FOs
-        "grounded_into_double_play",                       # 1 GIDP
-        "force_out",                                       # 1 FC out
-        "sac_fly",                                         # 1 SF
+        "single",
+        "single",
+        "single",
+        "single",  # 4 singles
+        "double",
+        "double",  # 2 doubles
+        "triple",  # 1 triple
+        "home_run",
+        "home_run",  # 2 HRs
+        "walk",
+        "walk",
+        "walk",  # 3 walks
+        "intent_walk",  # 1 IBB
+        "hit_by_pitch",  # 1 HBP
+        "strikeout",
+        "strikeout",
+        "strikeout",
+        "strikeout",
+        "strikeout",  # 5 Ks
+        "field_out",
+        "field_out",
+        "field_out",
+        "field_out",
+        "field_out",  # 5 FOs
+        "field_out",
+        "field_out",  # 2 more FOs
+        "grounded_into_double_play",  # 1 GIDP
+        "force_out",  # 1 FC out
+        "sac_fly",  # 1 SF
     ]
     # Repeat to fill n_total
     events = (events_pool * ((n_total // len(events_pool)) + 1))[:n_total]
 
     # Descriptions for each pitch (the last pitch of the PA)
     batted_ball_set = {
-        "single", "double", "triple", "home_run", "field_out",
-        "grounded_into_double_play", "force_out", "sac_fly",
+        "single",
+        "double",
+        "triple",
+        "home_run",
+        "field_out",
+        "grounded_into_double_play",
+        "force_out",
+        "sac_fly",
     }
     descriptions = []
     for ev in events:
@@ -282,7 +325,9 @@ def make_synthetic_statcast_df(
             launch_speed.append(speed)
             launch_speed_angle.append(6.0 if speed >= 98.0 else 4.0)
             bb_type.append("ground_ball" if i % 3 == 0 else "fly_ball")
-            xwoba.append(0.500 if ev in ("single", "double", "triple", "home_run") else 0.050)
+            xwoba.append(
+                0.500 if ev in ("single", "double", "triple", "home_run") else 0.050
+            )
         else:
             launch_speed.append(float("nan"))
             launch_speed_angle.append(float("nan"))

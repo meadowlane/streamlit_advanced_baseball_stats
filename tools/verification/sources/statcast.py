@@ -57,7 +57,9 @@ class StatcastSource(BaseSource):
             ) from exc
 
         if df_full.empty:
-            raise SourceError(f"No Statcast data for batter {player.mlbam_id} in {year}")
+            raise SourceError(
+                f"No Statcast data for batter {player.mlbam_id} in {year}"
+            )
 
         df = filter_by_scope(df_full, game_type)
         if df.empty:
@@ -91,7 +93,9 @@ class StatcastSource(BaseSource):
             ) from exc
 
         if df_full.empty:
-            raise SourceError(f"No Statcast data for pitcher {player.mlbam_id} in {year}")
+            raise SourceError(
+                f"No Statcast data for pitcher {player.mlbam_id} in {year}"
+            )
 
         df = filter_by_scope(df_full, game_type)
         if df.empty:
