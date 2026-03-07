@@ -1,19 +1,7 @@
-"""Statcast source adapter — independent re-fetch and re-compute.
+"""Statcast source adapter — shared raw fetch, independent re-compute.
 
-This adapter re-fetches raw Statcast data via pybaseball and recomputes
-Statcast-derived stats using the **same functions** as the app
-(``stats.splits._compute_stats``, ``_compute_all_pitcher_stats``).
-
-Design note
------------
-Because this adapter uses the same computation code as the app, it is a
-**consistency check**, not fully independent verification.  It validates that:
-1. The raw Statcast data round-trips correctly (no filtering bugs).
-2. The computation results are stable between calls.
-3. The FanGraphs wOBA column matches the in-app Statcast computation.
-
-Any discrepancy between AppSource and StatcastSource for the *same* player
-indicates a data-ordering or caching issue, not a formula bug.
+This adapter reuses the verification run's cached raw Statcast data and
+recomputes Statcast-derived stats using the same functions as the app.
 """
 
 from __future__ import annotations
@@ -26,27 +14,21 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-
-from data.fetcher import _fetch_statcast_batter, _fetch_statcast_pitcher  # noqa: E402
-from stats.splits import (  # noqa: E402
-    _compute_stats,
-    _compute_all_pitcher_stats,
+from stats.splits import _compute_all_pitcher_stats, _compute_stats  # noqa: E402
+from tools.verification.game_scope import SOURCE_SCOPE_SUPPORT, filter_by_scope  # noqa: E402
+from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
+from tools.verification.sources.statcast_cache import (  # noqa: E402
+    get_cached_batter_statcast,
+    get_cached_pitcher_statcast,
 )
 
-from tools.verification.sources.base import BaseSource, PlayerIdentity, SourceError  # noqa: E402
-from tools.verification.game_scope import filter_by_scope, SOURCE_SCOPE_SUPPORT  # noqa: E402
-
-# Fastball pitch type codes used for FBv calculation
 _FB_CODES = frozenset(["FF", "FA", "FT", "SI"])
 
 
 class StatcastSource(BaseSource):
-    """Re-fetches Statcast data and recomputes all Statcast-derived stats.
+    """Recomputes Statcast-derived stats from cached raw Statcast data."""
 
-    Calling ``get_batter_season`` or ``get_pitcher_season`` on this adapter
-    exercises the exact same computation path as the app.  Any differences
-    from ``AppSource`` are bugs in the pipeline (caching, field ordering, etc.).
-    """
+    is_independent: bool = False
 
     @property
     def source_name(self) -> str:
@@ -68,14 +50,15 @@ class StatcastSource(BaseSource):
             raise SourceError("StatcastSource: offline mode requires fixture")
 
         try:
-            df_full = _fetch_statcast_batter(player.mlbam_id, year)
+            df_full = get_cached_batter_statcast(player.mlbam_id, year)
         except Exception as exc:
-            raise SourceError(f"Statcast batter fetch failed for {player.mlbam_id}/{year}: {exc}") from exc
+            raise SourceError(
+                f"Statcast batter fetch failed for {player.mlbam_id}/{year}: {exc}"
+            ) from exc
 
         if df_full.empty:
             raise SourceError(f"No Statcast data for batter {player.mlbam_id} in {year}")
 
-        # Filter to the requested scope before computing
         df = filter_by_scope(df_full, game_type)
         if df.empty:
             raise SourceError(
@@ -83,14 +66,10 @@ class StatcastSource(BaseSource):
                 f"for scope={game_type!r}"
             )
 
-        computed = _compute_stats(df, player_type="Batter")
-
-        # FBv from scope-filtered data
-        result: dict[str, Any] = dict(computed)
+        result: dict[str, Any] = dict(_compute_stats(df, player_type="Batter"))
         fbv = self._compute_fbv(df)
         if fbv is not None:
             result["FBv"] = fbv
-
         return result
 
     def get_pitcher_season(
@@ -105,9 +84,11 @@ class StatcastSource(BaseSource):
             raise SourceError("StatcastSource: offline mode requires fixture")
 
         try:
-            df_full = _fetch_statcast_pitcher(player.mlbam_id, year)
+            df_full = get_cached_pitcher_statcast(player.mlbam_id, year)
         except Exception as exc:
-            raise SourceError(f"Statcast pitcher fetch failed for {player.mlbam_id}/{year}: {exc}") from exc
+            raise SourceError(
+                f"Statcast pitcher fetch failed for {player.mlbam_id}/{year}: {exc}"
+            ) from exc
 
         if df_full.empty:
             raise SourceError(f"No Statcast data for pitcher {player.mlbam_id} in {year}")
@@ -119,18 +100,14 @@ class StatcastSource(BaseSource):
                 f"for scope={game_type!r}"
             )
 
-        computed = _compute_all_pitcher_stats(df)
-        result: dict[str, Any] = dict(computed)
-
+        result: dict[str, Any] = dict(_compute_all_pitcher_stats(df))
         fbv = self._compute_fbv(df)
         if fbv is not None:
             result["FBv"] = fbv
-
         return result
 
     @staticmethod
     def _compute_fbv(df: Any) -> float | None:
-        """Return mean fastball velocity from pitch-level Statcast data."""
         try:
             if "pitch_type" not in df.columns or "release_speed" not in df.columns:
                 return None

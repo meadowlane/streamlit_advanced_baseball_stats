@@ -161,8 +161,6 @@ def compare_stat(
         if src_val is None:
             abs_diffs[src_name] = None
             rel_diffs[src_name] = None
-            if src_name in indep_vals:
-                per_source_pass[src_name] = True  # can't fail what we can't measure
             continue
         try:
             a = float(our_val)
@@ -170,8 +168,6 @@ def compare_stat(
         except (TypeError, ValueError):
             abs_diffs[src_name] = None
             rel_diffs[src_name] = None
-            if src_name in indep_vals:
-                per_source_pass[src_name] = True
             continue
 
         ad = abs(a - b)
@@ -224,8 +220,26 @@ def compare_stat(
             "May reflect a minor definition difference for this source."
         )
     elif n_fail >= 1:
-        verdict = "FAIL"
-        note = None
+        info_matches: list[str] = []
+        if tolerance is not None:
+            for src_name, src_val in info_vals.items():
+                if src_val is None:
+                    continue
+                try:
+                    if tolerance.check(float(our_val), float(src_val)) == "PASS":
+                        info_matches.append(src_name)
+                except (TypeError, ValueError):
+                    continue
+
+        if n_total == 1 and info_matches:
+            verdict = "WARN"
+            note = (
+                "Only one independent source disagrees, while an informational "
+                f"cross-check matches the app ({', '.join(sorted(info_matches))})."
+            )
+        else:
+            verdict = "FAIL"
+            note = None
 
     return StatComparison(
         stat=stat,

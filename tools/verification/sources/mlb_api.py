@@ -160,6 +160,38 @@ def _get_stat_dict(
     return aggregate_fn(splits)
 
 
+def _aggregate_splits(splits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return an aggregated split wrapper matching the MLB API shape."""
+    if not splits:
+        return {"stat": {}}
+
+    first_stat = splits[0].get("stat", {})
+    if "battersFaced" in first_stat or "inningsPitched" in first_stat:
+        return {"stat": _aggregate_pitching_splits(splits)}
+    return {"stat": _aggregate_hitting_splits(splits)}
+
+
+def _pick_or_aggregate_splits(
+    splits: list[dict[str, Any]],
+    pa_key: str,
+) -> dict[str, Any] | None:
+    """Return the best split wrapper, preferring an explicit total row."""
+    if not splits:
+        return None
+    if len(splits) == 1:
+        return splits[0]
+
+    for split in splits:
+        team_name = split.get("team", {}).get("name", "").lower()
+        if "total" in team_name or team_name in ("2tm", "3tm", "2 teams", "3 teams"):
+            return split
+
+    if any((split.get("stat", {}) or {}).get(pa_key) is None for split in splits):
+        return splits[0]
+
+    return _aggregate_splits(splits)
+
+
 class MLBApiSource(BaseSource):
     """Fetches stats from the official MLB Stats API."""
 
@@ -193,13 +225,13 @@ class MLBApiSource(BaseSource):
         })
 
         splits = self._extract_splits(data)
-        stat = _get_stat_dict(splits, "plateAppearances", _aggregate_hitting_splits)
-        if stat is None:
+        best = _pick_or_aggregate_splits(splits, "plateAppearances")
+        if best is None:
             raise SourceError(
                 f"MLB API: no hitting splits for {player.name} in {year}"
             )
 
-        return self._parse_hitting_stat(stat)
+        return self._parse_hitting_stat(best["stat"])
 
     def get_pitcher_season(
         self,
@@ -227,19 +259,23 @@ class MLBApiSource(BaseSource):
         })
 
         splits = self._extract_splits(data)
-        stat = _get_stat_dict(splits, "battersFaced", _aggregate_pitching_splits)
-        if stat is None:
+        best = _pick_or_aggregate_splits(splits, "battersFaced")
+        if best is None:
             raise SourceError(
                 f"MLB API: no pitching splits for {player.name} in {year}"
             )
 
-        return self._parse_pitching_stat(stat)
+        return self._parse_pitching_stat(best["stat"])
 
     @staticmethod
     def _extract_splits(data: dict[str, Any]) -> list[dict[str, Any]]:
         stats_list = data.get("stats", [])
         if not stats_list:
             return []
+        for entry in stats_list:
+            type_name = entry.get("type", {}).get("displayName", "").lower()
+            if type_name == "season":
+                return entry.get("splits", [])
         return stats_list[0].get("splits", [])
 
     @staticmethod
