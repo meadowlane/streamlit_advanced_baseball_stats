@@ -72,8 +72,8 @@ _FG_WRC_PLUS_COLS = [
 
 
 def _last_completed_season_year() -> int:
-    """Return the most recent season that should have stable full-year stats."""
-    return dt.date.today().year - 1
+    """Return the most recent season that may have stats available."""
+    return dt.date.today().year
 
 
 def _empty_batting_stats_df(season: int, reason: str | None = None) -> pd.DataFrame:
@@ -115,10 +115,15 @@ def _fetch_batting_stats(season: int, min_pa: int = 50) -> pd.DataFrame:
             pb.batting_stats(season_int, qual=min_pa)
         )
     except Exception:
-        return _empty_batting_stats_df(
-            season_int,
-            reason=f"No batting stats available for {season_int} yet.",
-        )
+        try:
+            return _ensure_traditional_slash_stats(
+                pb.batting_stats(season_int, qual=1)
+            )
+        except Exception:
+            return _empty_batting_stats_df(
+                season_int,
+                reason=f"No batting stats available for {season_int} yet.",
+            )
 
 
 def _safe_divide(numer: pd.Series, denom: pd.Series) -> pd.Series:
@@ -304,10 +309,13 @@ def _fetch_pitching_stats(season: int, min_ip: int = 20) -> pd.DataFrame:
     try:
         return pb.pitching_stats(season_int, qual=min_ip)
     except Exception:
-        return _empty_pitching_stats_df(
-            season_int,
-            reason=f"No pitching stats available for {season_int} yet.",
-        )
+        try:
+            return pb.pitching_stats(season_int, qual=1)
+        except Exception:
+            return _empty_pitching_stats_df(
+                season_int,
+                reason=f"No pitching stats available for {season_int} yet.",
+            )
 
 
 def _fetch_statcast_pitcher(player_mlbam_id: int, season: int) -> pd.DataFrame:
